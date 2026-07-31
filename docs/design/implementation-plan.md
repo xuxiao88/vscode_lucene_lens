@@ -27,6 +27,7 @@
 - stdout 只输出一个 `protocolVersion: 1` 的 JSON 响应；stderr 只用于诊断日志。
 - 普通文档 cursor 保存下一个内部 doc ID；查询 cursor 保存 `searchAfter` 所需的 score 和 doc ID。
 - Webview 只发送索引 ID 和操作意图，不访问文件系统、不启动进程、不接收插件路径。
+- 查询通过 `--analyzer` 指定默认 Analyzer，并通过可重复的 `--field-analyzer <field> <analyzer>` 指定字段级覆盖。
 - CSV 使用 UTF-8、CRLF、表头和标准双引号转义；多值在单元格内以换行分隔。
 
 ## 4. 完成标准
@@ -34,6 +35,6 @@
 - 同一 VSIX 可在 macOS、Windows、Linux 安装。
 - Java 优先使用配置的 Java Home，未配置时使用 `PATH`；Java 不可用或低于 11 时给出明确提示。
 - 能自动发现工作区中的 Lucene 9 索引并浏览 stored fields 与全部 DocValues 类型。
-- 能使用 Standard、Keyword、Whitespace、Simple、CJK、Smart Chinese Analyzer 查询并分页。
+- 能使用默认 Analyzer 和字段级覆盖组合 Standard、Keyword、Whitespace、Simple、CJK、Smart Chinese Analyzer 查询、分页和导出。
 - 能流式导出普通文档和查询结果为 CSV。
 - 命令成功、失败、超时或取消后均无常驻 Java 进程和未释放索引句柄。

@@ -2,6 +2,8 @@ import type {
   CliResponse,
   AnalyzerName,
   DocumentRow,
+  FieldAnalyzerSelection,
+  FieldSummary,
   PageResult,
   ProbeResult,
   WebviewMessage
@@ -33,12 +35,16 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | undefined 
     case "export":
       return {type: value.type};
     case "search":
-      return typeof value.query === "string" && isAnalyzerName(value.analyzer)
-        ? {type: value.type, query: value.query, analyzer: value.analyzer}
+      return typeof value.query === "string"
+        ? {type: value.type, query: value.query}
         : undefined;
     case "setAnalyzer":
       return isAnalyzerName(value.analyzer)
         ? {type: value.type, analyzer: value.analyzer}
+        : undefined;
+    case "setFieldAnalyzer":
+      return typeof value.field === "string" && isFieldAnalyzerSelection(value.analyzer)
+        ? {type: value.type, field: value.field, analyzer: value.analyzer}
         : undefined;
     case "pageSize":
       return [25, 50, 100, 200].includes(Number(value.pageSize))
@@ -58,6 +64,21 @@ function isAnalyzerName(value: unknown): value is AnalyzerName {
     || value === "simple"
     || value === "cjk"
     || value === "smartcn";
+}
+
+function isFieldAnalyzerSelection(value: unknown): value is FieldAnalyzerSelection {
+  return value === "inherit" || isAnalyzerName(value);
+}
+
+export function parseFieldSummaries(value: unknown): FieldSummary[] {
+  if (!isRecord(value)
+      || !Array.isArray(value.items)
+      || !value.items.every((item) =>
+        isRecord(item) && typeof item.name === "string" && typeof item.indexed === "boolean")) {
+    throw new Error("PROCESS_PROTOCOL_ERROR: Invalid fields result.");
+  }
+  return (value.items as Array<Record<string, unknown>>)
+    .map((item) => ({name: item.name as string, indexed: item.indexed as boolean}));
 }
 
 export function parseProbeResult(value: unknown): ProbeResult {

@@ -1,10 +1,16 @@
 import {randomBytes} from "node:crypto";
 import * as vscode from "vscode";
 import {CliError, JavaCommandRunner} from "../platform/javaCommandRunner";
-import {parseDocumentPage, parseDocumentRow, parseWebviewMessage} from "../protocol/validation";
+import {
+  parseDocumentPage,
+  parseDocumentRow,
+  parseFieldSummaries,
+  parseWebviewMessage
+} from "../protocol/validation";
 import type {
   AnalyzerName,
   DocumentRow,
+  FieldAnalyzerSelection,
   HostMessage,
   LensPageState,
   PageResult,
@@ -53,6 +59,8 @@ export class LensPanel implements vscode.Disposable {
   private cursors: Array<string | undefined> = [undefined];
   private webviewReady = false;
   private preferredIndexId: string | undefined;
+  private readonly analyzerSettings = new Map<string, AnalyzerSettings>();
+  private readonly searchableFieldCache = new Map<string, string[]>();
   private state: LensPageState;
 
   private constructor(
@@ -74,6 +82,8 @@ export class LensPanel implements vscode.Disposable {
       totalRelation: "exact",
       query: "",
       analyzer: this.configuredAnalyzer(),
+      searchableFields: [],
+      fieldAnalyzers: {},
       hasPrevious: false,
       hasNext: false
     };
@@ -114,6 +124,8 @@ export class LensPanel implements vscode.Disposable {
         status: "untrusted",
         selectedIndexId: undefined,
         rows: [],
+        searchableFields: [],
+        fieldAnalyzers: {},
         error: "Trust this workspace before Lucene Lens scans or opens indexes."
       });
       return;
@@ -125,6 +137,8 @@ export class LensPanel implements vscode.Disposable {
       selectedIndexId: undefined,
       selectedLuceneMajor: undefined,
       rows: [],
+      searchableFields: [],
+      fieldAnalyzers: {},
       total: "0",
       hasPrevious: false,
       hasNext: false
@@ -160,7 +174,7 @@ export class LensPanel implements vscode.Disposable {
       "--index", index.absolutePath,
       "--target", target.fsPath,
       "--query", this.state.query,
-      "--analyzer", this.state.analyzer,
+      ...this.analyzerArgs(),
       "--max-hits", String(maxHits)
     ];
     try {
@@ -194,10 +208,13 @@ export class LensPanel implements vscode.Disposable {
           await this.rescan(this.state.selectedIndexId);
           break;
         case "search":
-          await this.search(message.query, message.analyzer);
+          await this.search(message.query);
           break;
         case "setAnalyzer":
           await this.setAnalyzer(message.analyzer);
+          break;
+        case "setFieldAnalyzer":
+          await this.setFieldAnalyzer(message.field, message.analyzer);
           break;
         case "pageSize":
           this.cursors = [undefined];
@@ -242,6 +259,8 @@ export class LensPanel implements vscode.Disposable {
         selectedIndexId: undefined,
         selectedLuceneMajor: undefined,
         rows: [],
+        searchableFields: [],
+        fieldAnalyzers: {},
         total: "0",
         hasPrevious: false,
         hasNext: false
@@ -252,24 +271,31 @@ export class LensPanel implements vscode.Disposable {
       ? preferredIndexId
       : indexes[0]?.id;
     this.preferredIndexId = selectedIndexId;
+    const settings = selectedIndexId
+      ? this.analyzerSettings.get(selectedIndexId)
+      : undefined;
     this.cursors = [undefined];
     this.update({
       selectedIndexId,
       selectedLuceneMajor: 9,
       query: "",
+      analyzer: settings?.analyzer ?? this.configuredAnalyzer(),
+      searchableFields: [],
+      fieldAnalyzers: {},
       pageNumber: 1,
       rows: [],
       total: "0",
       hasPrevious: false,
       hasNext: false
     });
+    await this.loadSearchableFields();
     await this.loadPage();
   }
 
-  private async search(query: string, analyzer: AnalyzerName): Promise<void> {
+  private async search(query: string): Promise<void> {
     this.cancelCurrent();
     this.cursors = [undefined];
-    this.update({query: query.trim(), analyzer, pageNumber: 1});
+    this.update({query: query.trim(), pageNumber: 1});
     await this.loadPage();
   }
 
@@ -278,7 +304,56 @@ export class LensPanel implements vscode.Disposable {
     this.cancelCurrent();
     this.cursors = [undefined];
     this.update({analyzer, pageNumber: 1});
+    this.saveAnalyzerSettings();
     if (this.state.query) await this.loadPage();
+  }
+
+  private async setFieldAnalyzer(
+    field: string,
+    analyzer: FieldAnalyzerSelection
+  ): Promise<void> {
+    if (!this.state.searchableFields.includes(field)
+        || this.state.fieldAnalyzers[field] === analyzer) {
+      return;
+    }
+    this.cancelCurrent();
+    this.cursors = [undefined];
+    this.update({
+      fieldAnalyzers: {...this.state.fieldAnalyzers, [field]: analyzer},
+      pageNumber: 1
+    });
+    this.saveAnalyzerSettings();
+    if (this.state.query) await this.loadPage();
+  }
+
+  private async loadSearchableFields(): Promise<void> {
+    const index = this.selectedIndex();
+    if (!index) return;
+    let searchableFields = this.searchableFieldCache.get(index.id);
+    if (!searchableFields) {
+      const fields = parseFieldSummaries(await this.runner.run<unknown>(
+        "fields",
+        ["--index", index.absolutePath]
+      ));
+      searchableFields = fields
+        .filter((field) => field.indexed)
+        .map((field) => field.name)
+        .sort((left, right) => left.localeCompare(right));
+      this.searchableFieldCache.set(index.id, searchableFields);
+    }
+    const saved = this.analyzerSettings.get(index.id);
+    const fieldAnalyzers = Object.fromEntries(
+      searchableFields.map((field) => [
+        field,
+        saved?.fieldAnalyzers[field] ?? "inherit"
+      ])
+    ) as Record<string, FieldAnalyzerSelection>;
+    this.update({
+      searchableFields,
+      analyzer: saved?.analyzer ?? this.state.analyzer,
+      fieldAnalyzers
+    });
+    this.saveAnalyzerSettings();
   }
 
   private async loadPage(): Promise<void> {
@@ -297,7 +372,7 @@ export class LensPanel implements vscode.Disposable {
           [
             "--index", index.absolutePath,
             "--query", this.state.query,
-            "--analyzer", this.state.analyzer,
+            ...this.analyzerArgs(),
             "--cursor", cursor,
             "--limit", String(this.state.pageSize),
             "--max-hits", String(config.get<number>("query.maxHits", 10000))
@@ -342,6 +417,26 @@ export class LensPanel implements vscode.Disposable {
 
   private selectedIndex(): ResolvedIndex | undefined {
     return this.resolvedIndexes.find((item) => item.id === this.state.selectedIndexId);
+  }
+
+  private analyzerArgs(): string[] {
+    const result = ["--analyzer", this.state.analyzer];
+    for (const field of this.state.searchableFields) {
+      const analyzer = this.state.fieldAnalyzers[field];
+      if (analyzer && analyzer !== "inherit") {
+        result.push("--field-analyzer", field, analyzer);
+      }
+    }
+    return result;
+  }
+
+  private saveAnalyzerSettings(): void {
+    const indexId = this.state.selectedIndexId;
+    if (!indexId) return;
+    this.analyzerSettings.set(indexId, {
+      analyzer: this.state.analyzer,
+      fieldAnalyzers: {...this.state.fieldAnalyzers}
+    });
   }
 
   private configuredAnalyzer(): AnalyzerName {
@@ -446,17 +541,24 @@ export class LensPanel implements vscode.Disposable {
       <button id="exportButton" title="Export CSV">Export CSV</button>
     </header>
     <section id="querySettingsPanel" class="query-settings" hidden>
-      <label>Default analyzer
-        <select id="analyzerSelect">
-          <option value="standard">Standard</option>
-          <option value="keyword">Keyword</option>
-          <option value="whitespace">Whitespace</option>
-          <option value="simple">Simple</option>
-          <option value="cjk">CJK</option>
-          <option value="smartcn">Smart Chinese</option>
-        </select>
-      </label>
-      <span>Choose the analyzer used when parsing query text. It must match the index's analysis behavior.</span>
+      <div class="query-settings-default">
+        <label>Default analyzer
+          <select id="analyzerSelect">
+            <option value="standard">Standard</option>
+            <option value="keyword">Keyword</option>
+            <option value="whitespace">Whitespace</option>
+            <option value="simple">Simple</option>
+            <option value="cjk">CJK</option>
+            <option value="smartcn">Smart Chinese</option>
+          </select>
+        </label>
+        <span>Used by fields that inherit the default.</span>
+      </div>
+      <div class="field-analyzers-section">
+        <strong>Field analyzers</strong>
+        <span>Override the default for individual searchable fields.</span>
+        <div id="fieldAnalyzerList" class="field-analyzers"></div>
+      </div>
     </section>
     <section id="status" class="status" aria-live="polite"></section>
     <section class="table-wrap">
@@ -487,6 +589,11 @@ export class LensPanel implements vscode.Disposable {
 </body>
 </html>`;
   }
+}
+
+interface AnalyzerSettings {
+  analyzer: AnalyzerName;
+  fieldAnalyzers: Record<string, FieldAnalyzerSelection>;
 }
 
 function normalizePageSize(value: number): 25 | 50 | 100 | 200 {

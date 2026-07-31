@@ -15,6 +15,13 @@ export type AnalyzerName =
   | "cjk"
   | "smartcn";
 
+export type FieldAnalyzerSelection = AnalyzerName | "inherit";
+
+export interface FieldSummary {
+  name: string;
+  indexed: boolean;
+}
+
 export type StoredValue =
   | {type: "string"; value: string}
   | {type: "int" | "long" | "float" | "double"; value: string}
@@ -91,6 +98,8 @@ export interface LensPageState {
   totalRelation: "exact" | "lowerBound";
   query: string;
   analyzer: AnalyzerName;
+  searchableFields: string[];
+  fieldAnalyzers: Record<string, FieldAnalyzerSelection>;
   hasPrevious: boolean;
   hasNext: boolean;
   error?: string;
@@ -99,8 +108,9 @@ export interface LensPageState {
 export type WebviewMessage =
   | {type: "ready"}
   | {type: "rescan"}
-  | {type: "search"; query: string; analyzer: AnalyzerName}
+  | {type: "search"; query: string}
   | {type: "setAnalyzer"; analyzer: AnalyzerName}
+  | {type: "setFieldAnalyzer"; field: string; analyzer: FieldAnalyzerSelection}
   | {type: "pageSize"; pageSize: 25 | 50 | 100 | 200}
   | {type: "previousPage"}
   | {type: "nextPage"}

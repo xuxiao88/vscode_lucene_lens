@@ -7,6 +7,7 @@ import org.apache.lucene.analysis.cn.smart.SmartChineseAnalyzer;
 import org.apache.lucene.analysis.core.KeywordAnalyzer;
 import org.apache.lucene.analysis.core.SimpleAnalyzer;
 import org.apache.lucene.analysis.core.WhitespaceAnalyzer;
+import org.apache.lucene.analysis.miscellaneous.PerFieldAnalyzerWrapper;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.BinaryDocValues;
@@ -154,13 +155,18 @@ public final class Lucene9Util {
             Path index,
             String queryText,
             String analyzerName,
+            Map<String, String> fieldAnalyzerNames,
             String cursor,
             int limit,
             int maxHits,
             boolean includeBinary) {
         return withIndex(index, (directory, reader, infos) -> {
-            try (Analyzer analyzer = analyzer(analyzerName)) {
-                Query parsed = parseQuery(reader, queryText, analyzer);
+            try (AnalyzerBundle analyzers = analyzers(analyzerName, fieldAnalyzerNames)) {
+                Query parsed = parseQuery(
+                        reader,
+                        queryText,
+                        analyzers.configuredAnalyzer,
+                        fieldAnalyzerNames.keySet());
                 QueryCursor queryCursor = decodeQueryCursor(cursor);
                 int remaining = Math.max(0, maxHits - queryCursor.seen);
                 int requested = Math.min(limit, remaining);
@@ -203,6 +209,7 @@ public final class Lucene9Util {
             Path target,
             String queryText,
             String analyzerName,
+            Map<String, String> fieldAnalyzerNames,
             int maxHits) {
         Path normalizedTarget = target.toAbsolutePath().normalize();
         Path parent = normalizedTarget.getParent();
@@ -222,7 +229,14 @@ public final class Lucene9Util {
                 writeCsvHeader(writer, columns, !queryText.isBlank());
                 exported = queryText.isBlank()
                         ? exportDocuments(reader, writer, columns)
-                        : exportQuery(reader, writer, columns, queryText, analyzerName, maxHits);
+                        : exportQuery(
+                                reader,
+                                writer,
+                                columns,
+                                queryText,
+                                analyzerName,
+                                fieldAnalyzerNames,
+                                maxHits);
             } catch (IOException exception) {
                 throw new PluginException("EXPORT_FAILED", "Unable to write the CSV file.", exception);
             }
@@ -252,9 +266,14 @@ public final class Lucene9Util {
             List<CsvColumn> columns,
             String queryText,
             String analyzerName,
+            Map<String, String> fieldAnalyzerNames,
             int maxHits) throws IOException {
-        try (Analyzer analyzer = analyzer(analyzerName)) {
-            Query parsed = parseQuery(reader, queryText, analyzer);
+        try (AnalyzerBundle analyzers = analyzers(analyzerName, fieldAnalyzerNames)) {
+            Query parsed = parseQuery(
+                    reader,
+                    queryText,
+                    analyzers.configuredAnalyzer,
+                    fieldAnalyzerNames.keySet());
             IndexSearcher searcher = new IndexSearcher(reader);
             ScoreDoc after = null;
             long count = 0;
@@ -374,7 +393,11 @@ public final class Lucene9Util {
         return result;
     }
 
-    private Query parseQuery(DirectoryReader reader, String queryText, Analyzer analyzer) {
+    private Query parseQuery(
+            DirectoryReader reader,
+            String queryText,
+            Analyzer analyzer,
+            Set<String> configuredFields) {
         if (queryText == null || queryText.isBlank()) {
             throw new PluginException("QUERY_PARSE_ERROR", "Query text must not be empty.");
         }
@@ -384,6 +407,13 @@ public final class Lucene9Util {
         }
         if (indexedFields.isEmpty()) {
             throw new PluginException("QUERY_PARSE_ERROR", "The index has no searchable text fields.");
+        }
+        for (String field : configuredFields) {
+            if (!indexedFields.contains(field)) {
+                throw new PluginException(
+                        "FIELD_NOT_FOUND",
+                        "The configured analyzer field is not searchable: " + field);
+            }
         }
         try {
             if (indexedFields.size() == 1) {
@@ -404,6 +434,29 @@ public final class Lucene9Util {
             case "cjk": return new CJKAnalyzer();
             case "smartcn": return new SmartChineseAnalyzer();
             default: throw new PluginException("INVALID_REQUEST", "Unsupported analyzer: " + name);
+        }
+    }
+
+    private AnalyzerBundle analyzers(
+            String defaultAnalyzerName,
+            Map<String, String> fieldAnalyzerNames) {
+        List<Analyzer> delegates = new ArrayList<>();
+        try {
+            Analyzer defaultAnalyzer = analyzer(defaultAnalyzerName);
+            delegates.add(defaultAnalyzer);
+            Map<String, Analyzer> fieldAnalyzers = new LinkedHashMap<>();
+            for (Map.Entry<String, String> entry : fieldAnalyzerNames.entrySet()) {
+                Analyzer fieldAnalyzer = analyzer(entry.getValue());
+                delegates.add(fieldAnalyzer);
+                fieldAnalyzers.put(entry.getKey(), fieldAnalyzer);
+            }
+            Analyzer configuredAnalyzer = fieldAnalyzers.isEmpty()
+                    ? defaultAnalyzer
+                    : new PerFieldAnalyzerWrapper(defaultAnalyzer, fieldAnalyzers);
+            return new AnalyzerBundle(configuredAnalyzer, delegates);
+        } catch (RuntimeException exception) {
+            for (Analyzer delegate : delegates) delegate.close();
+            throw exception;
         }
     }
 
@@ -651,6 +704,22 @@ public final class Lucene9Util {
     @FunctionalInterface
     private interface IndexOperation<T> {
         T apply(Directory directory, DirectoryReader reader, SegmentInfos infos) throws IOException;
+    }
+
+    private static final class AnalyzerBundle implements AutoCloseable {
+        final Analyzer configuredAnalyzer;
+        final List<Analyzer> delegates;
+
+        AnalyzerBundle(Analyzer configuredAnalyzer, List<Analyzer> delegates) {
+            this.configuredAnalyzer = configuredAnalyzer;
+            this.delegates = delegates;
+        }
+
+        @Override
+        public void close() {
+            if (!delegates.contains(configuredAnalyzer)) configuredAnalyzer.close();
+            for (Analyzer delegate : delegates) delegate.close();
+        }
     }
 
     private static final class QueryCursor {

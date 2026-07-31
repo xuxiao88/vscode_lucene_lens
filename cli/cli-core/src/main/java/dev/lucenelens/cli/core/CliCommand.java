@@ -10,7 +10,9 @@ import picocli.CommandLine.ParentCommand;
 import picocli.CommandLine.ScopeType;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.function.Function;
@@ -177,6 +179,7 @@ public final class CliCommand implements Callable<Integer> {
     static final class QueryCommand extends IndexCommand {
         @Option(names = "--query", required = true) String query;
         @Option(names = "--analyzer", defaultValue = "standard") String analyzer;
+        @Option(names = "--field-analyzer", arity = "2") List<String> fieldAnalyzers = new ArrayList<>();
         @Option(names = "--cursor", defaultValue = "") String cursor;
         @Option(names = "--limit", defaultValue = "50") int limit;
         @Option(names = "--max-hits", defaultValue = "10000") int maxHits;
@@ -186,7 +189,15 @@ public final class CliCommand implements Callable<Integer> {
             validateLimit(limit);
             if (maxHits < 1) throw new PluginException("INVALID_REQUEST", "--max-hits must be positive.");
             return parent.withPlugin(plugin ->
-                    plugin.query(index, query, analyzer, cursor, limit, maxHits, includeBinary));
+                    plugin.query(
+                            index,
+                            query,
+                            analyzer,
+                            parseFieldAnalyzers(fieldAnalyzers),
+                            cursor,
+                            limit,
+                            maxHits,
+                            includeBinary));
         }
     }
 
@@ -195,11 +206,40 @@ public final class CliCommand implements Callable<Integer> {
         @Option(names = "--target", required = true) Path target;
         @Option(names = "--query", defaultValue = "") String query;
         @Option(names = "--analyzer", defaultValue = "standard") String analyzer;
+        @Option(names = "--field-analyzer", arity = "2") List<String> fieldAnalyzers = new ArrayList<>();
         @Option(names = "--max-hits", defaultValue = "10000") int maxHits;
         @Override public Integer call() {
             if (maxHits < 1) throw new PluginException("INVALID_REQUEST", "--max-hits must be positive.");
-            return parent.withPlugin(plugin -> plugin.exportCsv(index, target, query, analyzer, maxHits));
+            return parent.withPlugin(plugin -> plugin.exportCsv(
+                    index,
+                    target,
+                    query,
+                    analyzer,
+                    parseFieldAnalyzers(fieldAnalyzers),
+                    maxHits));
         }
+    }
+
+    private static Map<String, String> parseFieldAnalyzers(List<String> values) {
+        if (values.size() % 2 != 0) {
+            throw new PluginException(
+                    "INVALID_REQUEST",
+                    "--field-analyzer requires a field name followed by an analyzer name.");
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        for (int index = 0; index < values.size(); index += 2) {
+            String field = values.get(index);
+            String analyzer = values.get(index + 1);
+            if (field.isBlank() || analyzer.isBlank()) {
+                throw new PluginException("INVALID_REQUEST", "Field analyzer values must not be blank.");
+            }
+            if (result.put(field, analyzer) != null) {
+                throw new PluginException(
+                        "INVALID_REQUEST",
+                        "Duplicate field analyzer configuration: " + field);
+            }
+        }
+        return result;
     }
 
     private static void validateLimit(int limit) {

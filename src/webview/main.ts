@@ -6,10 +6,20 @@ declare function acquireVsCodeApi<T = unknown>(): {
   setState(state: T): void;
 };
 
+const ANALYZER_OPTIONS = [
+  ["standard", "Standard"],
+  ["keyword", "Keyword"],
+  ["whitespace", "Whitespace"],
+  ["simple", "Simple"],
+  ["cjk", "CJK"],
+  ["smartcn", "Smart Chinese"]
+] as const;
+
 const vscode = acquireVsCodeApi<LensPageState>();
 const elements = {
   version: byId<HTMLSelectElement>("versionSelect"),
   analyzer: byId<HTMLSelectElement>("analyzerSelect"),
+  fieldAnalyzers: byId<HTMLElement>("fieldAnalyzerList"),
   querySettings: byId<HTMLButtonElement>("querySettingsButton"),
   querySettingsPanel: byId<HTMLElement>("querySettingsPanel"),
   searchForm: byId<HTMLFormElement>("searchForm"),
@@ -31,7 +41,14 @@ const elements = {
 };
 
 let state: LensPageState | undefined = vscode.getState();
-if (state) render(state);
+if (state
+    && Array.isArray(state.searchableFields)
+    && state.fieldAnalyzers
+    && typeof state.fieldAnalyzers === "object") {
+  render(state);
+} else {
+  state = undefined;
+}
 
 window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
   const message = event.data;
@@ -50,8 +67,7 @@ elements.searchForm.addEventListener("submit", (event) => {
   event.preventDefault();
   vscode.postMessage({
     type: "search",
-    query: elements.search.value,
-    analyzer: elements.analyzer.value
+    query: elements.search.value
   });
 });
 elements.querySettings.addEventListener("click", () => {
@@ -76,6 +92,7 @@ vscode.postMessage({type: "ready"});
 function render(next: LensPageState): void {
   elements.search.value = next.query;
   elements.analyzer.value = next.analyzer;
+  elements.analyzer.disabled = !next.selectedIndexId || next.status === "scanning";
   elements.pageSize.value = String(next.pageSize);
   elements.pageNumber.textContent = `Page ${next.pageNumber}`;
   elements.total.textContent =
@@ -87,7 +104,52 @@ function render(next: LensPageState): void {
   elements.version.disabled = true;
   elements.status.textContent = statusText(next);
   elements.status.classList.toggle("error", next.status === "error");
+  renderFieldAnalyzers(next);
   renderTable(next.rows);
+}
+
+function renderFieldAnalyzers(next: LensPageState): void {
+  elements.fieldAnalyzers.replaceChildren();
+  if (next.searchableFields.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "field-analyzers-empty";
+    empty.textContent = next.selectedIndexId
+      ? "This index has no searchable fields."
+      : "Open an index to configure field analyzers.";
+    elements.fieldAnalyzers.append(empty);
+    return;
+  }
+  for (const field of next.searchableFields) {
+    const label = document.createElement("label");
+    label.className = "field-analyzer";
+    const name = document.createElement("span");
+    name.textContent = field;
+    name.title = field;
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", `Analyzer for ${field}`);
+    select.append(analyzerOption("inherit", "Inherit default"));
+    for (const [value, text] of ANALYZER_OPTIONS) {
+      select.append(analyzerOption(value, text));
+    }
+    select.value = next.fieldAnalyzers[field] ?? "inherit";
+    select.disabled = next.status === "scanning";
+    select.addEventListener("change", () =>
+      vscode.postMessage({
+        type: "setFieldAnalyzer",
+        field,
+        analyzer: select.value
+      })
+    );
+    label.append(name, select);
+    elements.fieldAnalyzers.append(label);
+  }
+}
+
+function analyzerOption(value: string, label: string): HTMLOptionElement {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  return option;
 }
 
 function renderTable(rows: DocumentRow[]): void {

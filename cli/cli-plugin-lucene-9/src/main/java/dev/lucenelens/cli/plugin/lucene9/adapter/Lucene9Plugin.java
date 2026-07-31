@@ -22,11 +22,31 @@ public final class Lucene9Plugin implements LucenePlugin {
         return util.document(index, docId, includeBinary);
     }
     @Override public Map<String, Object> query(
-            Path index, String query, String analyzer, String cursor, int limit, int maxHits, boolean includeBinary) {
-        return util.query(index, query, analyzer, cursor, limit, maxHits, includeBinary);
+            Path index,
+            String query,
+            String analyzer,
+            Map<String, String> fieldAnalyzers,
+            String cursor,
+            int limit,
+            int maxHits,
+            boolean includeBinary) {
+        return util.query(
+                index,
+                query,
+                analyzer,
+                fieldAnalyzers,
+                cursor,
+                limit,
+                maxHits,
+                includeBinary);
     }
     @Override public Map<String, Object> exportCsv(
-            Path index, Path target, String query, String analyzer, int maxHits) {
-        return util.exportCsv(index, target, query, analyzer, maxHits);
+            Path index,
+            Path target,
+            String query,
+            String analyzer,
+            Map<String, String> fieldAnalyzers,
+            int maxHits) {
+        return util.exportCsv(index, target, query, analyzer, fieldAnalyzers, maxHits);
     }
 }

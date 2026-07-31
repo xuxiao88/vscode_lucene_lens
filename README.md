@@ -21,6 +21,8 @@ Lucene Lens 优先使用 `luceneLens.java.home`。未配置时使用 `PATH` 中�
 
 侧边栏标题栏的目录按钮可手动选择工作区内外的 Lucene 索引目录，刷新按钮可重新扫描工作区索引；主页面重新扫描后，侧边栏列表也会同步更新。正式页面不再重复提供索引下拉框。
 
+页面的 **Query Settings** 可设置默认查询 Analyzer，并为每个可查询字段选择继承默认值或单独指定 Analyzer。查询结果导出使用相同配置。
+
 首版版本下拉只有 Lucene 9。索引始终以只读方式打开。
 
 ## 配置
@@ -31,7 +33,7 @@ Lucene Lens 优先使用 `luceneLens.java.home`。未配置时使用 `PATH` 中�
 | `luceneLens.cli.maxHeap` | `512m` | 每个 CLI 进程的最大堆 |
 | `luceneLens.pageSize` | `50` | 默认分页大小 |
 | `luceneLens.query.maxHits` | `10000` | 查询命中跟踪与导出上限 |
-| `luceneLens.query.analyzer` | `standard` | 默认查询分词器；可在页面的 **Query Settings** 中切换 |
+| `luceneLens.query.analyzer` | `standard` | 默认查询分词器；可在 **Query Settings** 中切换并按字段覆盖 |
 | `luceneLens.requestTimeout` | `30000` | 请求超时，单位毫秒 |
 
 ## 构建

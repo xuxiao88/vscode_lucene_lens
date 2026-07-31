@@ -22,6 +22,7 @@ public interface LucenePlugin {
             Path index,
             String query,
             String analyzer,
+            Map<String, String> fieldAnalyzers,
             String cursor,
             int limit,
             int maxHits,
@@ -32,5 +33,6 @@ public interface LucenePlugin {
             Path target,
             String query,
             String analyzer,
+            Map<String, String> fieldAnalyzers,
             int maxHits);
 }
