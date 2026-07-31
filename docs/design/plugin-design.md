@@ -99,7 +99,7 @@ dist/
 | `luceneLens.cli.maxHeap` | `512m` | 每个 CLI 子进程的最大堆 |
 | `luceneLens.pageSize` | `50` | 初始页大小，可选 25、50、100、200 |
 | `luceneLens.query.maxHits` | `10000` | 查询和导出命中上限 |
-| `luceneLens.query.analyzer` | `standard` | 首选默认 Analyzer |
+| `luceneLens.query.analyzer` | `standard` | 推断为全文字段时的首选 Analyzer |
 | `luceneLens.requestTimeout` | `30000` | CLI 超时，单位毫秒 |
 | `luceneLens.showSensitiveValuesInLogs` | `false` | 预留项；当前日志实现不读取该值，也不记录字段值 |
 
@@ -136,6 +136,13 @@ dist/
   "indexes": {
     "relative/path/to/index": {
       "analyzer": "standard",
+      "fieldTypeAnalyzers": {
+        "exact": "keyword",
+        "fullText": "standard"
+      },
+      "fieldTypeOverrides": {
+        "title": "exact"
+      },
       "fieldAnalyzers": {
         "content": "smartcn"
       }
@@ -144,7 +151,7 @@ dist/
 }
 ```
 
-工作区内索引的 Analyzer 配置使用相对路径，工作区根目录使用 `"."`；外部索引使用 `file:` URI。读取时严格校验结构。写入通过队列串行执行，避免相互覆盖。
+`analyzer` 保留为全文字段 Analyzer 的兼容字段；`fieldTypeAnalyzers` 保存页面可见的字段类型规则，`fieldTypeOverrides` 保存用户对单个字段推断类型的调整，`fieldAnalyzers` 保存优先级更高的字段 Analyzer 规则。旧配置缺少新增字段时分别使用自动推断和空覆盖。工作区内索引的 Analyzer 配置使用相对路径，工作区根目录使用 `"."`；外部索引使用 `file:` URI。读取时严格校验结构。写入通过队列串行执行，避免相互覆盖。
 
 ## 5. Java CLI 与插件
 
@@ -213,7 +220,7 @@ Analyzer 能力由插件返回，不由 Extension Host 硬编码。Lucene 9 插�
 ```json
 {
   "protocolVersion": 1,
-  "cliVersion": "0.1.0",
+  "cliVersion": "0.1.1",
   "result": {}
 }
 ```
@@ -223,7 +230,7 @@ Analyzer 能力由插件返回，不由 Extension Host 硬编码。Lucene 9 插�
 ```json
 {
   "protocolVersion": 1,
-  "cliVersion": "0.1.0",
+  "cliVersion": "0.1.1",
   "error": {
     "code": "INDEX_VERSION_UNSUPPORTED",
     "message": "The index version is not supported by this Lucene plugin.",
@@ -248,8 +255,10 @@ stdout 只包含一个 JSON 对象，stderr 用于诊断。退出码为：
 
 - 未输入查询时调用 `documents`；有查询时调用 `query`。
 - 未指定字段时使用索引中的可查询字段构建 `MultiFieldQueryParser`。
-- 默认 Analyzer 优先使用 `luceneLens.query.analyzer`；若插件未声明该 ID，使用声明列表第一项。
-- 字段级覆盖通过重复的 `--field-analyzer <field> <id>` 传递，并由 `PerFieldAnalyzerWrapper` 应用。
+- Extension Host 根据 `fields` 返回的 `indexOptions` 推断字段类型：`DOCS` 为精确值字段，其余包含词频或位置信息的可查询字段为全文字段。该分类是基于索引元数据的推断，不代表索引保存了原始 Java 字段类或建索引 Analyzer。
+- 用户可在 Query Settings 将单个字段移动到另一类型；与自动推断不同的结果写入 `fieldTypeOverrides`，移回推断类型时删除对应覆盖。
+- 精确值字段类型规则默认使用 `keyword`，全文字段类型规则优先使用 `luceneLens.query.analyzer`；两类规则均可在 Query Settings 修改。
+- 字段指定规则优先于字段类型规则。Extension Host 计算每个字段的最终 Analyzer，通过重复的 `--field-analyzer <field> <id>` 传递，CLI 使用 `PerFieldAnalyzerWrapper` 应用。
 - Analyzer 变化后清除 cursor 并回到第一页。
 - 查询结果与查询导出使用同一套 Analyzer 设置。
 
@@ -302,6 +311,7 @@ interface ResolvedIndex {
 interface FieldSummary {
   name: string;
   indexed: boolean;
+  indexOptions: string;
 }
 
 interface ProbeResult {
@@ -321,9 +331,12 @@ interface LensPageState {
   total: string;
   totalRelation: "exact" | "lowerBound";
   query: string;
-  analyzer: string;
   analyzers: AnalyzerDefinition[];
   searchableFields: string[];
+  inferredFieldTypes: Record<string, "exact" | "fullText">;
+  fieldTypes: Record<string, "exact" | "fullText">;
+  fieldTypeOverrides: Record<string, "exact" | "fullText">;
+  fieldTypeAnalyzers: Record<"exact" | "fullText", string>;
   fieldAnalyzers: Record<string, string>;
   hasPrevious: boolean;
   hasNext: boolean;
@@ -347,7 +360,7 @@ Webview 可发送 `ready`、`rescan`、`search`、Analyzer 设置、分页、文
 
 - 顶部展示固定且不可编辑的 `Lucene 9` 版本标识、查询框、Query Settings 和导出按钮。
 - 页面不重复提供索引选择器，索引由侧边栏驱动。
-- Query Settings 将默认 Analyzer 与字段覆盖紧凑排列；字段规则可添加和删除。
+- Query Settings 分为字段类型规则和字段指定规则。字段类型及推断依据、完整字段列表和 Analyzer 均可见；字段列表自动换行，不因固定数量截断。用户可点击字段在两种推断类型之间移动，手工类型和类型 Analyzer 均按索引保存；字段指定规则优先级更高，并可恢复为类型规则。
 - 表格显示当前页 stored fields 和 doc values，点击行查看完整详情。
 - 页脚提供页大小、上一页和下一页。
 

@@ -20,7 +20,7 @@ public final class Lucene9Plugin implements LucenePlugin {
 
     private final Lucene9Util util = new Lucene9Util();
 
-    @Override public String pluginVersion() { return "0.1.0"; }
+    @Override public String pluginVersion() { return "0.1.1"; }
     @Override public String luceneVersion() { return Version.LATEST.toString(); }
     @Override public List<AnalyzerDefinition> analyzers() { return ANALYZERS; }
     @Override public Map<String, Object> probe(Path index) { return util.probe(index); }

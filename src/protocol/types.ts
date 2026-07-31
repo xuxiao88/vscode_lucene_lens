@@ -8,6 +8,7 @@ export type PageStatus =
   | "cancelled";
 
 export type AnalyzerName = string;
+export type FieldType = "exact" | "fullText";
 
 export interface AnalyzerDefinition {
   name: AnalyzerName;
@@ -26,10 +27,13 @@ export interface PluginVersionResult {
 export interface FieldSummary {
   name: string;
   indexed: boolean;
+  indexOptions: string;
 }
 
 export interface AnalyzerSettings {
   analyzer: AnalyzerName;
+  fieldTypeAnalyzers: Record<FieldType, AnalyzerName>;
+  fieldTypeOverrides: Record<string, FieldType>;
   fieldAnalyzers: Record<string, AnalyzerName>;
 }
 
@@ -109,9 +113,12 @@ export interface LensPageState {
   total: string;
   totalRelation: "exact" | "lowerBound";
   query: string;
-  analyzer: AnalyzerName;
   analyzers: AnalyzerDefinition[];
   searchableFields: string[];
+  inferredFieldTypes: Record<string, FieldType>;
+  fieldTypes: Record<string, FieldType>;
+  fieldTypeOverrides: Record<string, FieldType>;
+  fieldTypeAnalyzers: Record<FieldType, AnalyzerName>;
   fieldAnalyzers: Record<string, AnalyzerName>;
   hasPrevious: boolean;
   hasNext: boolean;
@@ -122,7 +129,8 @@ export type WebviewMessage =
   | {type: "ready"}
   | {type: "rescan"}
   | {type: "search"; query: string}
-  | {type: "setAnalyzer"; analyzer: AnalyzerName}
+  | {type: "setFieldTypeAnalyzer"; fieldType: FieldType; analyzer: AnalyzerName}
+  | {type: "setFieldType"; field: string; fieldType: FieldType}
   | {type: "setFieldAnalyzer"; field: string; analyzer: AnalyzerName}
   | {type: "removeFieldAnalyzer"; field: string}
   | {type: "pageSize"; pageSize: 25 | 50 | 100 | 200}

@@ -13,6 +13,8 @@ import type {
   AnalyzerDefinition,
   AnalyzerName,
   DocumentRow,
+  FieldSummary,
+  FieldType,
   HostMessage,
   LensPageState,
   PageResult,
@@ -71,7 +73,7 @@ export class LensPanel implements vscode.Disposable {
   private webviewReady = false;
   private preferredIndexId: string | undefined;
   private settingsChangeQueue: Promise<void> = Promise.resolve();
-  private readonly searchableFieldCache = new Map<string, string[]>();
+  private readonly searchableFieldCache = new Map<string, FieldSummary[]>();
   private pluginAnalyzers: Promise<AnalyzerDefinition[]> | undefined;
   private state: LensPageState;
 
@@ -94,9 +96,15 @@ export class LensPanel implements vscode.Disposable {
       total: "0",
       totalRelation: "exact",
       query: "",
-      analyzer: this.configuredAnalyzer(),
       analyzers: [],
       searchableFields: [],
+      inferredFieldTypes: {},
+      fieldTypes: {},
+      fieldTypeOverrides: {},
+      fieldTypeAnalyzers: {
+        exact: "keyword",
+        fullText: this.configuredAnalyzer()
+      },
       fieldAnalyzers: {},
       hasPrevious: false,
       hasNext: false
@@ -149,6 +157,9 @@ export class LensPanel implements vscode.Disposable {
         selectedIndexId: undefined,
         rows: [],
         searchableFields: [],
+        inferredFieldTypes: {},
+        fieldTypes: {},
+        fieldTypeOverrides: {},
         fieldAnalyzers: {},
         error: "Trust this workspace before Lucene Lens scans or opens indexes."
       });
@@ -162,6 +173,9 @@ export class LensPanel implements vscode.Disposable {
       selectedLuceneMajor: undefined,
       rows: [],
       searchableFields: [],
+      inferredFieldTypes: {},
+      fieldTypes: {},
+      fieldTypeOverrides: {},
       fieldAnalyzers: {},
       total: "0",
       hasPrevious: false,
@@ -234,8 +248,11 @@ export class LensPanel implements vscode.Disposable {
         case "search":
           await this.search(message.query);
           break;
-        case "setAnalyzer":
-          await this.setAnalyzer(message.analyzer);
+        case "setFieldTypeAnalyzer":
+          await this.setFieldTypeAnalyzer(message.fieldType, message.analyzer);
+          break;
+        case "setFieldType":
+          await this.setFieldType(message.field, message.fieldType);
           break;
         case "setFieldAnalyzer":
           await this.setFieldAnalyzer(message.field, message.analyzer);
@@ -289,6 +306,9 @@ export class LensPanel implements vscode.Disposable {
         rows: [],
         analyzers,
         searchableFields: [],
+        inferredFieldTypes: {},
+        fieldTypes: {},
+        fieldTypeOverrides: {},
         fieldAnalyzers: {},
         total: "0",
         hasPrevious: false,
@@ -305,23 +325,40 @@ export class LensPanel implements vscode.Disposable {
       ? await this.workspaceSettings.load(selectedIndex.absolutePath)
       : undefined;
     const analyzerNames = new Set(analyzers.map((analyzer) => analyzer.name));
-    const requestedAnalyzer = settings?.analyzer ?? this.configuredAnalyzer();
-    const analyzer = analyzerNames.has(requestedAnalyzer)
-      ? requestedAnalyzer
+    const fallbackAnalyzer = analyzerNames.has(this.configuredAnalyzer())
+      ? this.configuredAnalyzer()
       : analyzers[0]?.name;
-    if (!analyzer) throw new Error("The selected Lucene plugin does not declare any analyzers.");
+    if (!fallbackAnalyzer) {
+      throw new Error("The selected Lucene plugin does not declare any analyzers.");
+    }
+    const requestedTypeAnalyzers = settings?.fieldTypeAnalyzers ?? {
+      exact: "keyword",
+      fullText: settings?.analyzer ?? fallbackAnalyzer
+    };
+    const fieldTypeAnalyzers: Record<FieldType, AnalyzerName> = {
+      exact: analyzerNames.has(requestedTypeAnalyzers.exact)
+        ? requestedTypeAnalyzers.exact
+        : analyzerNames.has("keyword") ? "keyword" : fallbackAnalyzer,
+      fullText: analyzerNames.has(requestedTypeAnalyzers.fullText)
+        ? requestedTypeAnalyzers.fullText
+        : fallbackAnalyzer
+    };
     const fieldAnalyzers = Object.fromEntries(
       Object.entries(settings?.fieldAnalyzers ?? {})
         .filter(([, fieldAnalyzer]) => analyzerNames.has(fieldAnalyzer))
     );
+    const fieldTypeOverrides = {...settings?.fieldTypeOverrides};
     this.cursors = [undefined];
     this.update({
       selectedIndexId,
       selectedLuceneMajor: 9,
       query: "",
-      analyzer,
       analyzers,
       searchableFields: [],
+      inferredFieldTypes: {},
+      fieldTypes: {},
+      fieldTypeOverrides,
+      fieldTypeAnalyzers,
       fieldAnalyzers,
       pageNumber: 1,
       rows: [],
@@ -340,21 +377,61 @@ export class LensPanel implements vscode.Disposable {
     await this.loadPage();
   }
 
-  private async setAnalyzer(analyzer: AnalyzerName): Promise<void> {
+  private async setFieldTypeAnalyzer(
+    fieldType: FieldType,
+    analyzer: AnalyzerName
+  ): Promise<void> {
     const selectedIndexId = this.state.selectedIndexId;
     const changed = await this.enqueueSettingsChange(async () => {
       if (this.state.selectedIndexId !== selectedIndexId
           || !this.supportsAnalyzer(analyzer)
-          || this.state.analyzer === analyzer) {
+          || this.state.fieldTypeAnalyzers[fieldType] === analyzer) {
         return false;
       }
       this.cancelCurrent();
       this.cursors = [undefined];
+      const fieldTypeAnalyzers = {
+        ...this.state.fieldTypeAnalyzers,
+        [fieldType]: analyzer
+      };
       await this.saveAnalyzerSettings({
-        analyzer,
+        analyzer: fieldTypeAnalyzers.fullText,
+        fieldTypeAnalyzers,
+        fieldTypeOverrides: this.state.fieldTypeOverrides,
         fieldAnalyzers: this.state.fieldAnalyzers
       });
-      this.update({analyzer, pageNumber: 1});
+      this.update({fieldTypeAnalyzers, pageNumber: 1});
+      return true;
+    });
+    if (changed && this.state.query) await this.loadPage();
+  }
+
+  private async setFieldType(field: string, fieldType: FieldType): Promise<void> {
+    const selectedIndexId = this.state.selectedIndexId;
+    const changed = await this.enqueueSettingsChange(async () => {
+      const inferredType = this.state.inferredFieldTypes[field];
+      if (this.state.selectedIndexId !== selectedIndexId
+          || !this.state.searchableFields.includes(field)
+          || !inferredType
+          || this.state.fieldTypes[field] === fieldType) {
+        return false;
+      }
+      this.cancelCurrent();
+      this.cursors = [undefined];
+      const fieldTypeOverrides = {...this.state.fieldTypeOverrides};
+      if (fieldType === inferredType) {
+        delete fieldTypeOverrides[field];
+      } else {
+        fieldTypeOverrides[field] = fieldType;
+      }
+      const fieldTypes = {...this.state.fieldTypes, [field]: fieldType};
+      await this.saveAnalyzerSettings({
+        analyzer: this.state.fieldTypeAnalyzers.fullText,
+        fieldTypeAnalyzers: this.state.fieldTypeAnalyzers,
+        fieldTypeOverrides,
+        fieldAnalyzers: this.state.fieldAnalyzers
+      });
+      this.update({fieldTypes, fieldTypeOverrides, pageNumber: 1});
       return true;
     });
     if (changed && this.state.query) await this.loadPage();
@@ -376,7 +453,9 @@ export class LensPanel implements vscode.Disposable {
       this.cursors = [undefined];
       const fieldAnalyzers = {...this.state.fieldAnalyzers, [field]: analyzer};
       await this.saveAnalyzerSettings({
-        analyzer: this.state.analyzer,
+        analyzer: this.state.fieldTypeAnalyzers.fullText,
+        fieldTypeAnalyzers: this.state.fieldTypeAnalyzers,
+        fieldTypeOverrides: this.state.fieldTypeOverrides,
         fieldAnalyzers
       });
       this.update({fieldAnalyzers, pageNumber: 1});
@@ -397,7 +476,9 @@ export class LensPanel implements vscode.Disposable {
       const fieldAnalyzers = {...this.state.fieldAnalyzers};
       delete fieldAnalyzers[field];
       await this.saveAnalyzerSettings({
-        analyzer: this.state.analyzer,
+        analyzer: this.state.fieldTypeAnalyzers.fullText,
+        fieldTypeAnalyzers: this.state.fieldTypeAnalyzers,
+        fieldTypeOverrides: this.state.fieldTypeOverrides,
         fieldAnalyzers
       });
       this.update({fieldAnalyzers, pageNumber: 1});
@@ -409,24 +490,40 @@ export class LensPanel implements vscode.Disposable {
   private async loadSearchableFields(): Promise<void> {
     const index = this.selectedIndex();
     if (!index) return;
-    let searchableFields = this.searchableFieldCache.get(index.id);
-    if (!searchableFields) {
-      const fields = parseFieldSummaries(await this.runner.run<unknown>(
+    let fields = this.searchableFieldCache.get(index.id);
+    if (!fields) {
+      fields = parseFieldSummaries(await this.runner.run<unknown>(
         "fields",
         ["--index", index.absolutePath]
       ));
-      searchableFields = fields
-        .filter((field) => field.indexed)
-        .map((field) => field.name)
-        .sort((left, right) => left.localeCompare(right));
-      this.searchableFieldCache.set(index.id, searchableFields);
+      this.searchableFieldCache.set(index.id, fields);
     }
+    const searchableFields = fields
+      .filter((field) => field.indexed)
+      .sort((left, right) => left.name.localeCompare(right.name));
+    const inferredFieldTypes = Object.fromEntries(
+      searchableFields.map((field) => [field.name, inferFieldType(field)])
+    ) as Record<string, FieldType>;
+    const searchableFieldNames = searchableFields.map((field) => field.name);
+    const fieldTypeOverrides = Object.fromEntries(
+      Object.entries(this.state.fieldTypeOverrides)
+        .filter(([field]) => searchableFieldNames.includes(field))
+    ) as Record<string, FieldType>;
+    const fieldTypes = Object.fromEntries(
+      searchableFieldNames.map((field) => [
+        field,
+        fieldTypeOverrides[field] ?? inferredFieldTypes[field]
+      ])
+    ) as Record<string, FieldType>;
     const fieldAnalyzers = Object.fromEntries(
       Object.entries(this.state.fieldAnalyzers)
-        .filter(([field]) => searchableFields.includes(field))
+        .filter(([field]) => searchableFieldNames.includes(field))
     ) as Record<string, AnalyzerName>;
     this.update({
-      searchableFields,
+      searchableFields: searchableFieldNames,
+      inferredFieldTypes,
+      fieldTypes,
+      fieldTypeOverrides,
       fieldAnalyzers
     });
   }
@@ -495,9 +592,15 @@ export class LensPanel implements vscode.Disposable {
   }
 
   private analyzerArgs(): string[] {
-    const result = ["--analyzer", this.state.analyzer];
-    for (const [field, analyzer] of Object.entries(this.state.fieldAnalyzers)) {
-      result.push("--field-analyzer", field, analyzer);
+    const defaultAnalyzer = this.state.fieldTypeAnalyzers.fullText;
+    const result = ["--analyzer", defaultAnalyzer];
+    for (const field of this.state.searchableFields) {
+      const fieldType = this.state.fieldTypes[field] ?? "fullText";
+      const analyzer =
+        this.state.fieldAnalyzers[field] ?? this.state.fieldTypeAnalyzers[fieldType];
+      if (analyzer !== defaultAnalyzer) {
+        result.push("--field-analyzer", field, analyzer);
+      }
     }
     return result;
   }
@@ -617,20 +720,45 @@ export class LensPanel implements vscode.Disposable {
       <button id="exportButton" title="Export CSV">Export CSV</button>
     </header>
     <section id="querySettingsPanel" class="query-settings" hidden>
-      <div class="query-settings-default">
-        <label>Default analyzer
-          <select id="analyzerSelect"></select>
-        </label>
-        <span>Used by fields that inherit the default.</span>
+      <div class="query-settings-header">
+        <div>
+          <strong>Query Settings</strong>
+          <span>Field types are inferred from index metadata. All effective rules are shown here.</span>
+        </div>
+        <span class="rule-priority">Field rule &gt; Type rule</span>
       </div>
-      <div class="field-analyzers-section">
-        <div class="field-analyzers-heading">
-          <strong>Field analyzers</strong>
-          <span>Add overrides only when needed. Settings are saved in .vscode/lucene-lens.json.</span>
+      <section class="analyzer-rules-section">
+        <div class="analyzer-rules-heading">
+          <strong>Field type rules</strong>
+          <span>Automatically classified · select a field to move it · saved per index</span>
+        </div>
+        <div class="field-type-rule">
+          <div>
+            <strong>Exact value</strong>
+            <span id="exactFieldCount"></span>
+          </div>
+          <span id="exactFieldExamples" class="field-type-examples"></span>
+          <select id="exactAnalyzerSelect" aria-label="Analyzer for exact value fields"></select>
+        </div>
+        <div class="field-type-rule">
+          <div>
+            <strong>Full text</strong>
+            <span id="fullTextFieldCount"></span>
+          </div>
+          <span id="fullTextFieldExamples" class="field-type-examples"></span>
+          <select id="fullTextAnalyzerSelect" aria-label="Analyzer for full text fields"></select>
+        </div>
+      </section>
+      <section class="analyzer-rules-section">
+        <div class="analyzer-rules-heading">
+          <div>
+            <strong>Field rules</strong>
+            <span>Overrides the inferred field type rule.</span>
+          </div>
           <button id="addFieldAnalyzerButton" type="button">Add field rule</button>
         </div>
         <div id="fieldAnalyzerList" class="field-analyzers"></div>
-      </div>
+      </section>
     </section>
     <section id="status" class="status" aria-live="polite"></section>
     <section class="table-wrap">
@@ -665,4 +793,8 @@ export class LensPanel implements vscode.Disposable {
 
 function normalizePageSize(value: number): 25 | 50 | 100 | 200 {
   return [25, 50, 100, 200].includes(value) ? (value as 25 | 50 | 100 | 200) : 50;
+}
+
+function inferFieldType(field: FieldSummary): FieldType {
+  return field.indexOptions === "DOCS" ? "exact" : "fullText";
 }

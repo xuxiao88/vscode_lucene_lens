@@ -39,9 +39,15 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | undefined 
       return typeof value.query === "string"
         ? {type: value.type, query: value.query}
         : undefined;
-    case "setAnalyzer":
-      return isAnalyzerName(value.analyzer)
-        ? {type: value.type, analyzer: value.analyzer}
+    case "setFieldTypeAnalyzer":
+      return (value.fieldType === "exact" || value.fieldType === "fullText")
+          && isAnalyzerName(value.analyzer)
+        ? {type: value.type, fieldType: value.fieldType, analyzer: value.analyzer}
+        : undefined;
+    case "setFieldType":
+      return typeof value.field === "string"
+          && (value.fieldType === "exact" || value.fieldType === "fullText")
+        ? {type: value.type, field: value.field, fieldType: value.fieldType}
         : undefined;
     case "setFieldAnalyzer":
       return typeof value.field === "string" && isAnalyzerName(value.analyzer)
@@ -106,11 +112,18 @@ export function parseFieldSummaries(value: unknown): FieldSummary[] {
   if (!isRecord(value)
       || !Array.isArray(value.items)
       || !value.items.every((item) =>
-        isRecord(item) && typeof item.name === "string" && typeof item.indexed === "boolean")) {
+        isRecord(item)
+        && typeof item.name === "string"
+        && typeof item.indexed === "boolean"
+        && typeof item.indexOptions === "string")) {
     throw new Error("PROCESS_PROTOCOL_ERROR: Invalid fields result.");
   }
   return (value.items as Array<Record<string, unknown>>)
-    .map((item) => ({name: item.name as string, indexed: item.indexed as boolean}));
+    .map((item) => ({
+      name: item.name as string,
+      indexed: item.indexed as boolean,
+      indexOptions: item.indexOptions as string
+    }));
 }
 
 export function parseProbeResult(value: unknown): ProbeResult {

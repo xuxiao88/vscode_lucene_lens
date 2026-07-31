@@ -2,7 +2,7 @@
   "name": "lucene-lens",
   "displayName": "Lucene Lens",
   "description": "Read-only Lucene 9 index viewer for Visual Studio Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "lucene-lens",
   "license": "Apache-2.0",
   "engines": {
@@ -111,7 +111,7 @@
           "type": "string",
           "default": "standard",
           "pattern": "^[a-z][a-z0-9_-]{0,63}$",
-          "description": "Preferred default analyzer ID. Available analyzers are declared by the selected Lucene plugin and can be changed in Query Settings."
+          "description": "Preferred analyzer ID for inferred full-text fields. Available analyzers are declared by the selected Lucene plugin and can be changed in Query Settings."
         },
         "luceneLens.requestTimeout": {
           "type": "number",

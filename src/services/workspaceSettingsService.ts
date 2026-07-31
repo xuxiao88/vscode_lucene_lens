@@ -59,6 +59,8 @@ export class WorkspaceSettingsService {
     return configured
       ? {
           analyzer: configured.analyzer,
+          fieldTypeAnalyzers: {...configured.fieldTypeAnalyzers},
+          fieldTypeOverrides: {...configured.fieldTypeOverrides},
           fieldAnalyzers: {...configured.fieldAnalyzers}
         }
       : undefined;
@@ -75,6 +77,8 @@ export class WorkspaceSettingsService {
       const file = await this.read(target.fileUri);
       file.indexes[target.indexKey] = {
         analyzer: settings.analyzer,
+        fieldTypeAnalyzers: {...settings.fieldTypeAnalyzers},
+        fieldTypeOverrides: {...settings.fieldTypeOverrides},
         fieldAnalyzers: {...settings.fieldAnalyzers}
       };
       await vscode.workspace.fs.createDirectory(target.directoryUri);
@@ -181,6 +185,12 @@ export class WorkspaceSettingsService {
       }
       indexes[indexKey] = {
         analyzer: rawSettings.analyzer,
+        fieldTypeAnalyzers: rawSettings.fieldTypeAnalyzers
+          ? {...rawSettings.fieldTypeAnalyzers}
+          : {exact: "keyword", fullText: rawSettings.analyzer},
+        fieldTypeOverrides: rawSettings.fieldTypeOverrides
+          ? {...rawSettings.fieldTypeOverrides}
+          : {},
         fieldAnalyzers: {...rawSettings.fieldAnalyzers}
       };
     }
@@ -200,6 +210,15 @@ function normalizeRelativePath(value: string): string {
 function isAnalyzerSettings(value: unknown): value is AnalyzerSettings {
   return isRecord(value)
     && isAnalyzerName(value.analyzer)
+    && (value.fieldTypeAnalyzers === undefined
+      || (isRecord(value.fieldTypeAnalyzers)
+        && isAnalyzerName(value.fieldTypeAnalyzers.exact)
+        && isAnalyzerName(value.fieldTypeAnalyzers.fullText)))
+    && (value.fieldTypeOverrides === undefined
+      || (isRecord(value.fieldTypeOverrides)
+        && Object.values(value.fieldTypeOverrides).every(
+          (fieldType) => fieldType === "exact" || fieldType === "fullText"
+        )))
     && isRecord(value.fieldAnalyzers)
     && Object.values(value.fieldAnalyzers).every(isAnalyzerName);
 }

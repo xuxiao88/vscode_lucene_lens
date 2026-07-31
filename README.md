@@ -21,7 +21,7 @@ Lucene Lens 优先使用 `luceneLens.java.home`。未配置时使用 `PATH` 中�
 
 侧边栏标题栏的目录按钮可手动选择工作区内外的 Lucene 索引目录，刷新按钮可重新扫描工作区索引；主页面重新扫描后，侧边栏列表也会同步更新。手动索引会持久化，索引项右侧的删除按钮只会将其从列表中移除，不会删除索引文件。正式页面不再重复提供索引下拉框。
 
-页面的 **Query Settings** 可设置默认查询 Analyzer；字段默认继承该配置，需要覆盖时通过 **Add field rule** 选择字段和 Analyzer。查询结果导出使用相同配置。
+页面的 **Query Settings** 会根据索引字段元数据推断两类规则：仅包含文档级词项的精确值字段默认使用 Keyword Analyzer，包含词频或位置信息的全文字段默认使用 Standard Analyzer。字段列表完整展示并自动换行，点击字段可在两种类型间调整；两类 Analyzer 也可修改。需要例外时可通过 **Add field rule** 为单个字段指定 Analyzer，字段 Analyzer 规则优先于字段类型规则。类型调整和 Analyzer 设置都会按索引保存，查询结果导出使用相同配置。
 
 手动索引目录和 Analyzer 配置保存在工作区的 `.vscode/lucene-lens.json`。手动目录使用文件 URI；Analyzer 配置中的工作区内索引使用相对路径标识，工作区外索引使用文件 URI，因此关闭页面或重启编辑器后仍会恢复。
 
@@ -35,7 +35,7 @@ Lucene Lens 优先使用 `luceneLens.java.home`。未配置时使用 `PATH` 中�
 | `luceneLens.cli.maxHeap` | `512m` | 每个 CLI 进程的最大堆 |
 | `luceneLens.pageSize` | `50` | 默认分页大小 |
 | `luceneLens.query.maxHits` | `10000` | 查询命中跟踪与导出上限 |
-| `luceneLens.query.analyzer` | `standard` | 默认查询分词器；可在 **Query Settings** 中切换并按字段覆盖 |
+| `luceneLens.query.analyzer` | `standard` | 推断为全文字段时的首选分词器；可在 **Query Settings** 中修改 |
 | `luceneLens.requestTimeout` | `30000` | 请求超时，单位毫秒 |
 
 ## 构建

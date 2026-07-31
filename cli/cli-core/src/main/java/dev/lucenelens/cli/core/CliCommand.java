@@ -30,7 +30,7 @@ import java.util.function.Function;
                 CliCommand.ExportCommand.class
         })
 public final class CliCommand implements Callable<Integer> {
-    static final String CLI_VERSION = "0.1.0";
+    static final String CLI_VERSION = "0.1.1";
     static final int PROTOCOL_VERSION = 1;
     private final ObjectMapper mapper = new ObjectMapper();
 

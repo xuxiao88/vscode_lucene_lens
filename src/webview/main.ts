@@ -1,6 +1,6 @@
 import type {
-  AnalyzerDefinition,
   DocumentRow,
+  FieldType,
   HostMessage,
   LensPageState
 } from "../protocol/types";
@@ -14,7 +14,12 @@ declare function acquireVsCodeApi<T = unknown>(): {
 const vscode = acquireVsCodeApi<LensPageState>();
 const elements = {
   version: byId<HTMLSelectElement>("versionSelect"),
-  analyzer: byId<HTMLSelectElement>("analyzerSelect"),
+  exactAnalyzer: byId<HTMLSelectElement>("exactAnalyzerSelect"),
+  fullTextAnalyzer: byId<HTMLSelectElement>("fullTextAnalyzerSelect"),
+  exactFieldCount: byId<HTMLElement>("exactFieldCount"),
+  fullTextFieldCount: byId<HTMLElement>("fullTextFieldCount"),
+  exactFieldExamples: byId<HTMLElement>("exactFieldExamples"),
+  fullTextFieldExamples: byId<HTMLElement>("fullTextFieldExamples"),
   addFieldAnalyzer: byId<HTMLButtonElement>("addFieldAnalyzerButton"),
   fieldAnalyzers: byId<HTMLElement>("fieldAnalyzerList"),
   querySettings: byId<HTMLButtonElement>("querySettingsButton"),
@@ -42,6 +47,14 @@ let state: LensPageState | undefined = vscode.getState();
 if (state
     && Array.isArray(state.analyzers)
     && Array.isArray(state.searchableFields)
+    && state.inferredFieldTypes
+    && typeof state.inferredFieldTypes === "object"
+    && state.fieldTypes
+    && typeof state.fieldTypes === "object"
+    && state.fieldTypeOverrides
+    && typeof state.fieldTypeOverrides === "object"
+    && state.fieldTypeAnalyzers
+    && typeof state.fieldTypeAnalyzers === "object"
     && state.fieldAnalyzers
     && typeof state.fieldAnalyzers === "object") {
   render(state);
@@ -74,8 +87,11 @@ elements.querySettings.addEventListener("click", () => {
   elements.querySettings.setAttribute("aria-expanded", String(!expanded));
   elements.querySettingsPanel.hidden = expanded;
 });
-elements.analyzer.addEventListener("change", () =>
-  vscode.postMessage({type: "setAnalyzer", analyzer: elements.analyzer.value})
+elements.exactAnalyzer.addEventListener("change", () =>
+  setFieldTypeAnalyzer("exact", elements.exactAnalyzer.value)
+);
+elements.fullTextAnalyzer.addEventListener("change", () =>
+  setFieldTypeAnalyzer("fullText", elements.fullTextAnalyzer.value)
 );
 elements.addFieldAnalyzer.addEventListener("click", () => {
   if (!state) return;
@@ -95,12 +111,7 @@ vscode.postMessage({type: "ready"});
 
 function render(next: LensPageState): void {
   elements.search.value = next.query;
-  elements.analyzer.replaceChildren(
-    ...next.analyzers.map((analyzer) => analyzerOption(analyzer.name, analyzer.label))
-  );
-  elements.analyzer.value = next.analyzer;
-  elements.analyzer.disabled =
-    !next.selectedIndexId || next.status === "scanning" || next.analyzers.length === 0;
+  renderFieldTypeRules(next);
   elements.pageSize.value = String(next.pageSize);
   elements.pageNumber.textContent = `Page ${next.pageNumber}`;
   elements.total.textContent =
@@ -114,6 +125,28 @@ function render(next: LensPageState): void {
   elements.status.classList.toggle("error", next.status === "error");
   renderFieldAnalyzers(next);
   renderTable(next.rows);
+}
+
+function renderFieldTypeRules(next: LensPageState): void {
+  for (const [select, fieldType] of [
+    [elements.exactAnalyzer, "exact"],
+    [elements.fullTextAnalyzer, "fullText"]
+  ] as Array<[HTMLSelectElement, FieldType]>) {
+    select.replaceChildren(
+      ...next.analyzers.map((analyzer) => analyzerOption(analyzer.name, analyzer.label))
+    );
+    select.value = next.fieldTypeAnalyzers[fieldType];
+    select.disabled =
+      !next.selectedIndexId || next.status === "scanning" || next.analyzers.length === 0;
+  }
+  const exactFields = fieldsOfType(next, "exact");
+  const fullTextFields = fieldsOfType(next, "fullText");
+  elements.exactFieldCount.textContent =
+    `${exactFields.length} fields · DOCS by default`;
+  elements.fullTextFieldCount.textContent =
+    `${fullTextFields.length} fields · frequencies / positions by default`;
+  renderFieldTypeFields(elements.exactFieldExamples, next, "exact", exactFields);
+  renderFieldTypeFields(elements.fullTextFieldExamples, next, "fullText", fullTextFields);
 }
 
 function renderFieldAnalyzers(next: LensPageState): void {
@@ -137,19 +170,33 @@ function renderFieldAnalyzers(next: LensPageState): void {
     elements.fieldAnalyzers.append(empty);
     return;
   }
+  if (configuredFields.length === 0 && !addingFieldAnalyzer) {
+    const empty = document.createElement("span");
+    empty.className = "field-analyzers-empty";
+    empty.textContent = "No field rules. All fields currently use their inferred type rule.";
+    elements.fieldAnalyzers.append(empty);
+  }
   for (const field of configuredFields) {
     const row = document.createElement("div");
     row.className = "field-analyzer";
     const name = document.createElement("span");
-    name.className = "field-analyzer-name";
-    name.textContent = field;
+    name.className = "field-analyzer-field";
+    const fieldName = document.createElement("strong");
+    fieldName.textContent = field;
+    const fieldType = document.createElement("small");
+    const effectiveFieldType = next.fieldTypes[field] ?? "fullText";
+    fieldType.textContent = Object.prototype.hasOwnProperty.call(next.fieldTypeOverrides, field)
+      ? `${fieldTypeLabel(effectiveFieldType)} · Field type override`
+      : fieldTypeLabel(effectiveFieldType);
+    name.append(fieldName, fieldType);
     name.title = field;
     const select = document.createElement("select");
     select.setAttribute("aria-label", `Analyzer for ${field}`);
     for (const analyzer of next.analyzers) {
       select.append(analyzerOption(analyzer.name, analyzer.label));
     }
-    select.value = next.fieldAnalyzers[field] ?? next.analyzer;
+    select.value = next.fieldAnalyzers[field]
+      ?? next.fieldTypeAnalyzers[next.fieldTypes[field] ?? "fullText"];
     select.disabled = next.status === "scanning";
     select.addEventListener("change", () =>
       vscode.postMessage({
@@ -161,18 +208,21 @@ function renderFieldAnalyzers(next: LensPageState): void {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "field-analyzer-remove";
-    remove.textContent = "×";
-    remove.title = `Remove analyzer override for ${field}`;
-    remove.setAttribute("aria-label", `Remove analyzer override for ${field}`);
+    remove.textContent = "Reset to type rule";
+    remove.title = `Reset ${field} to its inferred field type rule`;
+    remove.setAttribute("aria-label", `Reset ${field} to its inferred field type rule`);
     remove.disabled = next.status === "scanning";
     remove.addEventListener("click", () =>
       vscode.postMessage({type: "removeFieldAnalyzer", field})
     );
-    row.append(name, select, remove);
+    const source = document.createElement("span");
+    source.className = "field-analyzer-source";
+    source.textContent = "Field rule";
+    row.append(name, select, source, remove);
     elements.fieldAnalyzers.append(row);
   }
   if (addingFieldAnalyzer && availableFields.length > 0) {
-    elements.fieldAnalyzers.append(createFieldAnalyzerEditor(availableFields, next.analyzers));
+    elements.fieldAnalyzers.append(createFieldAnalyzerEditor(availableFields, next));
   } else {
     addingFieldAnalyzer = false;
   }
@@ -180,7 +230,7 @@ function renderFieldAnalyzers(next: LensPageState): void {
 
 function createFieldAnalyzerEditor(
   availableFields: string[],
-  analyzers: AnalyzerDefinition[]
+  next: LensPageState
 ): HTMLElement {
   const row = document.createElement("div");
   row.className = "field-analyzer field-analyzer-editor";
@@ -191,11 +241,12 @@ function createFieldAnalyzerEditor(
   placeholder.selected = true;
   fieldSelect.append(placeholder);
   for (const field of availableFields) {
-    fieldSelect.append(analyzerOption(field, field));
+    const type = next.fieldTypes[field] ?? "fullText";
+    fieldSelect.append(analyzerOption(field, `${field} · ${fieldTypeLabel(type)}`));
   }
   const analyzerSelect = document.createElement("select");
   analyzerSelect.setAttribute("aria-label", "Analyzer");
-  for (const analyzer of analyzers) {
+  for (const analyzer of next.analyzers) {
     analyzerSelect.append(analyzerOption(analyzer.name, analyzer.label));
   }
   const actions = document.createElement("span");
@@ -206,6 +257,8 @@ function createFieldAnalyzerEditor(
   save.disabled = true;
   fieldSelect.addEventListener("change", () => {
     save.disabled = fieldSelect.value === "";
+    const fieldType = next.fieldTypes[fieldSelect.value] ?? "fullText";
+    analyzerSelect.value = next.fieldTypeAnalyzers[fieldType];
   });
   save.addEventListener("click", () => {
     if (!fieldSelect.value) return;
@@ -227,6 +280,62 @@ function createFieldAnalyzerEditor(
   actions.append(save, cancel);
   row.append(fieldSelect, analyzerSelect, actions);
   return row;
+}
+
+function setFieldTypeAnalyzer(fieldType: FieldType, analyzer: string): void {
+  vscode.postMessage({type: "setFieldTypeAnalyzer", fieldType, analyzer});
+}
+
+function fieldsOfType(next: LensPageState, fieldType: FieldType): string[] {
+  return next.searchableFields.filter((field) => next.fieldTypes[field] === fieldType);
+}
+
+function renderFieldTypeFields(
+  container: HTMLElement,
+  next: LensPageState,
+  currentType: FieldType,
+  fields: string[]
+): void {
+  container.replaceChildren();
+  if (fields.length === 0) {
+    const empty = document.createElement("span");
+    empty.textContent = "No fields";
+    container.append(empty);
+    return;
+  }
+  for (const field of fields) {
+    const targetType: FieldType = currentType === "exact" ? "fullText" : "exact";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "field-type-field";
+    const overridden = Object.prototype.hasOwnProperty.call(next.fieldTypeOverrides, field);
+    button.classList.toggle("overridden", overridden);
+    button.disabled = next.status === "scanning";
+    button.title = `${overridden ? "Manually classified. " : ""}Move ${field} to ${fieldTypeLabel(targetType)}.`;
+    button.setAttribute(
+      "aria-label",
+      `${overridden ? "Manually classified. " : ""}Move ${field} to ${fieldTypeLabel(targetType)}`
+    );
+    const label = document.createElement("span");
+    label.textContent = field;
+    const action = document.createElement("span");
+    action.className = "field-type-field-action";
+    action.textContent = "↔";
+    button.append(label, action);
+    if (overridden) {
+      const manual = document.createElement("small");
+      manual.textContent = "Manual";
+      button.append(manual);
+    }
+    button.addEventListener("click", () =>
+      vscode.postMessage({type: "setFieldType", field, fieldType: targetType})
+    );
+    container.append(button);
+  }
+}
+
+function fieldTypeLabel(fieldType: FieldType): string {
+  return fieldType === "exact" ? "Exact value" : "Full text";
 }
 
 function analyzerOption(value: string, label: string): HTMLOptionElement {
