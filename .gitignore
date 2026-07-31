@@ -12,3 +12,7 @@
 
 # macOS metadata
 .DS_Store
+
+# Local VS Code settings and Lucene Lens workspace data
+/.vscode/settings.json
+/.vscode/lucene-lens.json
