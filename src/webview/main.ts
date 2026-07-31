@@ -19,6 +19,7 @@ const vscode = acquireVsCodeApi<LensPageState>();
 const elements = {
   version: byId<HTMLSelectElement>("versionSelect"),
   analyzer: byId<HTMLSelectElement>("analyzerSelect"),
+  addFieldAnalyzer: byId<HTMLButtonElement>("addFieldAnalyzerButton"),
   fieldAnalyzers: byId<HTMLElement>("fieldAnalyzerList"),
   querySettings: byId<HTMLButtonElement>("querySettingsButton"),
   querySettingsPanel: byId<HTMLElement>("querySettingsPanel"),
@@ -40,6 +41,7 @@ const elements = {
   toast: byId<HTMLElement>("toast")
 };
 
+let addingFieldAnalyzer = false;
 let state: LensPageState | undefined = vscode.getState();
 if (state
     && Array.isArray(state.searchableFields)
@@ -78,6 +80,11 @@ elements.querySettings.addEventListener("click", () => {
 elements.analyzer.addEventListener("change", () =>
   vscode.postMessage({type: "setAnalyzer", analyzer: elements.analyzer.value})
 );
+elements.addFieldAnalyzer.addEventListener("click", () => {
+  if (!state) return;
+  addingFieldAnalyzer = true;
+  renderFieldAnalyzers(state);
+});
 elements.rescan.addEventListener("click", () => vscode.postMessage({type: "rescan"}));
 elements.export.addEventListener("click", () => vscode.postMessage({type: "export"}));
 elements.pageSize.addEventListener("change", () =>
@@ -110,6 +117,16 @@ function render(next: LensPageState): void {
 
 function renderFieldAnalyzers(next: LensPageState): void {
   elements.fieldAnalyzers.replaceChildren();
+  const configuredFields = Object.keys(next.fieldAnalyzers)
+    .filter((field) => next.searchableFields.includes(field))
+    .sort((left, right) => left.localeCompare(right));
+  const availableFields = next.searchableFields
+    .filter((field) => !Object.prototype.hasOwnProperty.call(next.fieldAnalyzers, field));
+  elements.addFieldAnalyzer.disabled =
+    !next.selectedIndexId
+    || next.status === "scanning"
+    || addingFieldAnalyzer
+    || availableFields.length === 0;
   if (next.searchableFields.length === 0) {
     const empty = document.createElement("span");
     empty.className = "field-analyzers-empty";
@@ -119,19 +136,18 @@ function renderFieldAnalyzers(next: LensPageState): void {
     elements.fieldAnalyzers.append(empty);
     return;
   }
-  for (const field of next.searchableFields) {
-    const label = document.createElement("label");
-    label.className = "field-analyzer";
+  for (const field of configuredFields) {
+    const row = document.createElement("div");
+    row.className = "field-analyzer";
     const name = document.createElement("span");
     name.textContent = field;
     name.title = field;
     const select = document.createElement("select");
     select.setAttribute("aria-label", `Analyzer for ${field}`);
-    select.append(analyzerOption("inherit", "Inherit default"));
     for (const [value, text] of ANALYZER_OPTIONS) {
       select.append(analyzerOption(value, text));
     }
-    select.value = next.fieldAnalyzers[field] ?? "inherit";
+    select.value = next.fieldAnalyzers[field] ?? "standard";
     select.disabled = next.status === "scanning";
     select.addEventListener("change", () =>
       vscode.postMessage({
@@ -140,9 +156,70 @@ function renderFieldAnalyzers(next: LensPageState): void {
         analyzer: select.value
       })
     );
-    label.append(name, select);
-    elements.fieldAnalyzers.append(label);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "field-analyzer-remove";
+    remove.textContent = "Remove";
+    remove.disabled = next.status === "scanning";
+    remove.addEventListener("click", () =>
+      vscode.postMessage({type: "removeFieldAnalyzer", field})
+    );
+    row.append(name, select, remove);
+    elements.fieldAnalyzers.append(row);
   }
+  if (addingFieldAnalyzer && availableFields.length > 0) {
+    elements.fieldAnalyzers.append(createFieldAnalyzerEditor(availableFields));
+  } else {
+    addingFieldAnalyzer = false;
+  }
+}
+
+function createFieldAnalyzerEditor(availableFields: string[]): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "field-analyzer field-analyzer-editor";
+  const fieldSelect = document.createElement("select");
+  fieldSelect.setAttribute("aria-label", "Field");
+  const placeholder = analyzerOption("", "Select field");
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  fieldSelect.append(placeholder);
+  for (const field of availableFields) {
+    fieldSelect.append(analyzerOption(field, field));
+  }
+  const analyzerSelect = document.createElement("select");
+  analyzerSelect.setAttribute("aria-label", "Analyzer");
+  for (const [value, text] of ANALYZER_OPTIONS) {
+    analyzerSelect.append(analyzerOption(value, text));
+  }
+  const actions = document.createElement("span");
+  actions.className = "field-analyzer-actions";
+  const save = document.createElement("button");
+  save.type = "button";
+  save.textContent = "Add";
+  save.disabled = true;
+  fieldSelect.addEventListener("change", () => {
+    save.disabled = fieldSelect.value === "";
+  });
+  save.addEventListener("click", () => {
+    if (!fieldSelect.value) return;
+    addingFieldAnalyzer = false;
+    vscode.postMessage({
+      type: "setFieldAnalyzer",
+      field: fieldSelect.value,
+      analyzer: analyzerSelect.value
+    });
+  });
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "secondary";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => {
+    addingFieldAnalyzer = false;
+    if (state) renderFieldAnalyzers(state);
+  });
+  actions.append(save, cancel);
+  row.append(fieldSelect, analyzerSelect, actions);
+  return row;
 }
 
 function analyzerOption(value: string, label: string): HTMLOptionElement {

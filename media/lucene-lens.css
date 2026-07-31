@@ -32,11 +32,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, tr:focus-visibl
 .query-settings[hidden] { display: none; }
 .query-settings-default { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
 .query-settings-default label { display: flex; gap: 7px; align-items: center; color: var(--vscode-foreground); white-space: nowrap; }
-.field-analyzers-section { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: baseline; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--vscode-panel-border); }
-.field-analyzers { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 7px 14px; }
-.field-analyzer { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(150px, 190px); gap: 8px; align-items: center; color: var(--vscode-foreground); }
+.field-analyzers-section { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--vscode-panel-border); }
+.field-analyzers-heading { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.field-analyzers-heading span { flex: 1; }
+.field-analyzers { display: grid; gap: 7px; margin-top: 8px; }
+.field-analyzer { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(150px, 220px) auto; gap: 8px; align-items: center; color: var(--vscode-foreground); }
 .field-analyzer > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.field-analyzers-empty { grid-column: 1 / -1; padding: 5px 0; }
+.field-analyzer-actions { display: flex; gap: 6px; }
+.field-analyzer-remove, button.secondary { color: var(--vscode-foreground); background: transparent; }
+.field-analyzers-empty { padding: 5px 0; }
 .status { min-height: 28px; padding: 6px 10px; color: var(--vscode-descriptionForeground); }
 .status.error { color: var(--vscode-errorForeground); }
 .table-wrap { flex: 1; min-height: 0; overflow: auto; border-top: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); }
@@ -59,5 +63,5 @@ dialog pre { margin: 0; padding: 14px; overflow: auto; max-height: calc(80vh - 5
 @media (max-width: 760px) {
   .toolbar { flex-wrap: wrap; }
   .search { order: 2; width: 100%; }
-  .field-analyzers { grid-template-columns: 1fr; }
+  .field-analyzer { grid-template-columns: 1fr; }
 }

@@ -21,7 +21,9 @@ Lucene Lens 优先使用 `luceneLens.java.home`。未配置时使用 `PATH` 中�
 
 侧边栏标题栏的目录按钮可手动选择工作区内外的 Lucene 索引目录，刷新按钮可重新扫描工作区索引；主页面重新扫描后，侧边栏列表也会同步更新。正式页面不再重复提供索引下拉框。
 
-页面的 **Query Settings** 可设置默认查询 Analyzer，并为每个可查询字段选择继承默认值或单独指定 Analyzer。查询结果导出使用相同配置。
+页面的 **Query Settings** 可设置默认查询 Analyzer；字段默认继承该配置，需要覆盖时通过 **Add field rule** 选择字段和 Analyzer。查询结果导出使用相同配置。
+
+Analyzer 配置保存在工作区的 `.vscode/lucene-lens.json`。工作区内索引使用相对路径标识，工作区外手动选择的索引使用文件 URI，因此关闭页面或重启编辑器后仍会恢复配置。
 
 首版版本下拉只有 Lucene 9。索引始终以只读方式打开。
 

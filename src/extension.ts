@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import {CliError, JavaCommandRunner} from "./platform/javaCommandRunner";
 import {IndexDirectoryService} from "./services/indexDirectoryService";
+import {WorkspaceSettingsService} from "./services/workspaceSettingsService";
 import {IndexTree} from "./views/indexTree";
 import {LensPanel} from "./webview/lensPanel";
 
@@ -8,8 +9,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("Lucene Lens", {log: true});
   const runner = new JavaCommandRunner(context.extensionPath, output);
   const indexes = new IndexDirectoryService(runner, output);
+  const workspaceSettings = new WorkspaceSettingsService(output);
   const indexTree = new IndexTree(indexes);
-  const open = (): LensPanel => LensPanel.createOrShow(context, runner, indexes, output);
+  const open = (): LensPanel =>
+    LensPanel.createOrShow(context, runner, indexes, workspaceSettings, output);
 
   context.subscriptions.push(
     output,

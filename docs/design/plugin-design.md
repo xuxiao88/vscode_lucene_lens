@@ -217,6 +217,24 @@ stderr 仅记录诊断日志。若进程被强制终止、JVM 无法启动或 st
 
 所有分页参数还应有 CLI 硬上限，不能仅依赖 VS Code 配置。
 
+查询页面首次修改 Analyzer 时，在索引所属工作区创建以下配置文件；文件可由工作区自行决定是否纳入版本控制：
+
+```json
+{
+  "version": 1,
+  "indexes": {
+    "relative/path/to/index": {
+      "analyzer": "standard",
+      "fieldAnalyzers": {
+        "content": "smartcn"
+      }
+    }
+  }
+}
+```
+
+工作区内索引使用相对于所属 workspace folder 的 `/` 分隔路径，索引就是 workspace folder 时使用 `"."`；工作区外索引使用规范化文件 URI。读取时必须校验版本、Analyzer 名称和字段映射，格式错误时不得覆盖原文件。
+
 ### 2.3 交互设计
 
 #### 2.3.1 侧边栏索引导航
@@ -240,8 +258,8 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Indexes` 视图直接承�
 ┌──────────────────────────────────────────────────────────────────────┐
 │ [ Lucene 9 (Data) ▼ ] [ 搜索框              ] [查询设置] [导出] │
 ├──────────────────────────────────────────────────────────────────────┤
-│ 查询设置：默认分词器 [ Standard ▼ ]                                │
-│ field_a [继承默认 ▼]  field_b [Keyword ▼]  field_c [CJK ▼]        │
+│ 查询设置：默认分词器 [ Standard ▼ ]              [添加字段规则]   │
+│ field_b [Keyword ▼] [删除]  field_c [CJK ▼] [删除]                │
 ├──────────────────────────────────────────────────────────────────────┤
 │ doc ID │ score │ field_a │ field_b │ field_c │ ...                 │
 │────────┼───────┼─────────┼─────────┼─────────┼─────────────────────│
@@ -255,8 +273,9 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Indexes` 视图直接承�
 
 - 顶部左侧是 Lucene 版本下拉选项。
 - 顶部右侧是当前索引的搜索框。
-- 查询设置默认收起，展开后可选择当前页面会话使用的默认 Analyzer，并为当前索引的每个可查询字段选择“继承默认”或指定内置 Analyzer。
-- 字段配置仅保留在当前页面会话中；切换索引时分别保留各索引的配置。
+- 查询设置默认收起，展开后可选择默认 Analyzer；字段默认继承默认值，不逐项展示。
+- 字段覆盖通过“添加字段规则”按需创建，添加时分别从字段下拉和 Analyzer 下拉中选择，已配置字段可修改或删除。
+- 默认 Analyzer 和字段覆盖按索引持久化到工作区 `.vscode/lucene-lens.json`；切换索引、关闭页面或重启编辑器后均可恢复。
 - 默认或字段 Analyzer 切换后，已有查询立即从第一页重新执行；查询结果导出使用完全相同的 Analyzer 配置。
 - 中间区域使用普通表格展示文档数据。
 - 页脚固定展示结果数量、每页条数、当前页和翻页按钮。
@@ -312,7 +331,8 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Indexes` 视图直接承�
 - 搜索框只作用于当前由侧边栏选中的索引。
 - 按 Enter 或点击搜索图标后执行查询。
 - 查询设置提供 Standard、Keyword、Whitespace、Simple、CJK 和 Smart Chinese 六种内置 Analyzer；默认 Analyzer 初始值来自 `luceneLens.query.analyzer`。
-- 每个 `indexed` 字段默认继承默认 Analyzer，也可独立覆盖；字段名称来自只读 `fields` 命令，不能由 Webview 任意注入。
+- 每个 `indexed` 字段默认继承默认 Analyzer；仅实际添加的覆盖规则显示在列表中，添加规则时通过下拉选择尚未配置的字段。
+- 字段名称来自只读 `fields` 命令，Extension Host 再次校验，不能由 Webview 任意注入。
 - 空搜索内容表示取消查询并恢复普通文档浏览。
 - 查询使用 Lucene Query Parser；语法错误显示在搜索框下方，不清空现有表格。
 - 新搜索总是从第一页开始，并取消上一次尚未完成的查询。
@@ -496,7 +516,7 @@ interface LensPageState {
   total: string;
   analyzer: AnalyzerName;
   searchableFields: string[];
-  fieldAnalyzers: Record<string, AnalyzerName | "inherit">;
+  fieldAnalyzers: Record<string, AnalyzerName>;
   error?: string;
 }
 ```
@@ -544,6 +564,7 @@ Extension Host 必须先校验响应结构和 `protocolVersion`，再把 `result
 - `javaCommandRunner`：优先解析配置的 Java Home，未配置时使用系统 `PATH` 中的 `java`；以参数数组执行单次命令，收集 stdout/stderr，并处理版本校验、超时、取消、退出码和输出大小限制。
 - `luceneVersionResolver`：发现已打包插件、执行 `probe`、识别数据版本并维护当前索引的插件选择。
 - `indexDirectoryService`：扫描和维护工作区索引目录、版本匹配及页面缓存，不持有 Java reader 或进程。
+- `workspaceSettingsService`：校验并读写工作区 `.vscode/lucene-lens.json`，按索引保存默认 Analyzer 和字段级覆盖。
 - `protocol/validation`：校验来自 CLI 和 Webview 的所有消息。
 - `views`：展示工作区索引扫描状态和索引导航项，通过索引 ID 驱动单例页面，不直接读取文件或启动进程。
 - `webview`：只负责展示与交互，数据统一通过扩展进程转发。
@@ -563,7 +584,8 @@ Extension Host 必须先校验响应结构和 `protocolVersion`，再把 `result
 
 - `field:value` 形式按指定字段查询；未指定字段时，使用 `MultiFieldQueryParser` 查询当前索引全部文本索引字段。
 - 默认 Analyzer 初始值由 `luceneLens.query.analyzer` 配置，页面会话可切换 `StandardAnalyzer`、`KeywordAnalyzer`、`WhitespaceAnalyzer`、`SimpleAnalyzer`、`CJKAnalyzer` 和 `SmartChineseAnalyzer`。
-- 每个可查询字段可以继承默认 Analyzer 或选择一个字段级覆盖。Java 插件使用 `PerFieldAnalyzerWrapper`，未覆盖字段继续使用默认 Analyzer。
+- 每个可查询字段默认继承默认 Analyzer，用户可按需添加字段级覆盖。Java 插件使用 `PerFieldAnalyzerWrapper`，未覆盖字段继续使用默认 Analyzer。
+- 默认 Analyzer 与字段级覆盖写入工作区 `.vscode/lucene-lens.json`。工作区内索引以相对路径为键，外部索引以文件 URI 为键；文件格式带版本号并在读取时严格校验。
 - CLI 使用 `--analyzer <name>` 传递默认值，并允许重复传入 `--field-analyzer <field> <name>`；字段名和 Analyzer 名均在插件侧校验。
 - 默认及字段级 Analyzer 同时用于页面查询和查询结果导出；任一配置变化后查询 cursor 失效并从第一页重新执行。
 - 不支持通过任意类名加载 Analyzer。

@@ -28,6 +28,7 @@
 - 普通文档 cursor 保存下一个内部 doc ID；查询 cursor 保存 `searchAfter` 所需的 score 和 doc ID。
 - Webview 只发送索引 ID 和操作意图，不访问文件系统、不启动进程、不接收插件路径。
 - 查询通过 `--analyzer` 指定默认 Analyzer，并通过可重复的 `--field-analyzer <field> <analyzer>` 指定字段级覆盖。
+- 默认 Analyzer 和实际添加的字段级覆盖保存在工作区 `.vscode/lucene-lens.json`。
 - CSV 使用 UTF-8、CRLF、表头和标准双引号转义；多值在单元格内以换行分隔。
 
 ## 4. 完成标准

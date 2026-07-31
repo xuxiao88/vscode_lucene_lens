@@ -15,11 +15,14 @@ export type AnalyzerName =
   | "cjk"
   | "smartcn";
 
-export type FieldAnalyzerSelection = AnalyzerName | "inherit";
-
 export interface FieldSummary {
   name: string;
   indexed: boolean;
+}
+
+export interface AnalyzerSettings {
+  analyzer: AnalyzerName;
+  fieldAnalyzers: Record<string, AnalyzerName>;
 }
 
 export type StoredValue =
@@ -99,7 +102,7 @@ export interface LensPageState {
   query: string;
   analyzer: AnalyzerName;
   searchableFields: string[];
-  fieldAnalyzers: Record<string, FieldAnalyzerSelection>;
+  fieldAnalyzers: Record<string, AnalyzerName>;
   hasPrevious: boolean;
   hasNext: boolean;
   error?: string;
@@ -110,7 +113,8 @@ export type WebviewMessage =
   | {type: "rescan"}
   | {type: "search"; query: string}
   | {type: "setAnalyzer"; analyzer: AnalyzerName}
-  | {type: "setFieldAnalyzer"; field: string; analyzer: FieldAnalyzerSelection}
+  | {type: "setFieldAnalyzer"; field: string; analyzer: AnalyzerName}
+  | {type: "removeFieldAnalyzer"; field: string}
   | {type: "pageSize"; pageSize: 25 | 50 | 100 | 200}
   | {type: "previousPage"}
   | {type: "nextPage"}

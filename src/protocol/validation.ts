@@ -2,7 +2,6 @@ import type {
   CliResponse,
   AnalyzerName,
   DocumentRow,
-  FieldAnalyzerSelection,
   FieldSummary,
   PageResult,
   ProbeResult,
@@ -43,8 +42,12 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | undefined 
         ? {type: value.type, analyzer: value.analyzer}
         : undefined;
     case "setFieldAnalyzer":
-      return typeof value.field === "string" && isFieldAnalyzerSelection(value.analyzer)
+      return typeof value.field === "string" && isAnalyzerName(value.analyzer)
         ? {type: value.type, field: value.field, analyzer: value.analyzer}
+        : undefined;
+    case "removeFieldAnalyzer":
+      return typeof value.field === "string"
+        ? {type: value.type, field: value.field}
         : undefined;
     case "pageSize":
       return [25, 50, 100, 200].includes(Number(value.pageSize))
@@ -57,17 +60,13 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | undefined 
   }
 }
 
-function isAnalyzerName(value: unknown): value is AnalyzerName {
+export function isAnalyzerName(value: unknown): value is AnalyzerName {
   return value === "standard"
     || value === "keyword"
     || value === "whitespace"
     || value === "simple"
     || value === "cjk"
     || value === "smartcn";
-}
-
-function isFieldAnalyzerSelection(value: unknown): value is FieldAnalyzerSelection {
-  return value === "inherit" || isAnalyzerName(value);
 }
 
 export function parseFieldSummaries(value: unknown): FieldSummary[] {

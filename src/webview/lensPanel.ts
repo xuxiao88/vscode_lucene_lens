@@ -8,9 +8,9 @@ import {
   parseWebviewMessage
 } from "../protocol/validation";
 import type {
+  AnalyzerSettings,
   AnalyzerName,
   DocumentRow,
-  FieldAnalyzerSelection,
   HostMessage,
   LensPageState,
   PageResult,
@@ -18,6 +18,7 @@ import type {
   WebviewMessage
 } from "../protocol/types";
 import {IndexDirectoryService} from "../services/indexDirectoryService";
+import {WorkspaceSettingsService} from "../services/workspaceSettingsService";
 
 export class LensPanel implements vscode.Disposable {
   private static current: LensPanel | undefined;
@@ -26,6 +27,7 @@ export class LensPanel implements vscode.Disposable {
     context: vscode.ExtensionContext,
     runner: JavaCommandRunner,
     indexes: IndexDirectoryService,
+    workspaceSettings: WorkspaceSettingsService,
     output: vscode.OutputChannel
   ): LensPanel {
     if (LensPanel.current) {
@@ -45,7 +47,14 @@ export class LensPanel implements vscode.Disposable {
         ]
       }
     );
-    LensPanel.current = new LensPanel(panel, context, runner, indexes, output);
+    LensPanel.current = new LensPanel(
+      panel,
+      context,
+      runner,
+      indexes,
+      workspaceSettings,
+      output
+    );
     return LensPanel.current;
   }
 
@@ -59,7 +68,7 @@ export class LensPanel implements vscode.Disposable {
   private cursors: Array<string | undefined> = [undefined];
   private webviewReady = false;
   private preferredIndexId: string | undefined;
-  private readonly analyzerSettings = new Map<string, AnalyzerSettings>();
+  private settingsChangeQueue: Promise<void> = Promise.resolve();
   private readonly searchableFieldCache = new Map<string, string[]>();
   private state: LensPageState;
 
@@ -68,6 +77,7 @@ export class LensPanel implements vscode.Disposable {
     private readonly context: vscode.ExtensionContext,
     private readonly runner: JavaCommandRunner,
     private readonly indexService: IndexDirectoryService,
+    private readonly workspaceSettings: WorkspaceSettingsService,
     private readonly output: vscode.OutputChannel
   ) {
     const configuredPageSize = vscode.workspace
@@ -216,6 +226,9 @@ export class LensPanel implements vscode.Disposable {
         case "setFieldAnalyzer":
           await this.setFieldAnalyzer(message.field, message.analyzer);
           break;
+        case "removeFieldAnalyzer":
+          await this.removeFieldAnalyzer(message.field);
+          break;
         case "pageSize":
           this.cursors = [undefined];
           this.update({pageSize: message.pageSize, pageNumber: 1});
@@ -271,8 +284,9 @@ export class LensPanel implements vscode.Disposable {
       ? preferredIndexId
       : indexes[0]?.id;
     this.preferredIndexId = selectedIndexId;
-    const settings = selectedIndexId
-      ? this.analyzerSettings.get(selectedIndexId)
+    const selectedIndex = indexes.find((index) => index.id === selectedIndexId);
+    const settings = selectedIndex
+      ? await this.workspaceSettings.load(selectedIndex.absolutePath)
       : undefined;
     this.cursors = [undefined];
     this.update({
@@ -281,7 +295,7 @@ export class LensPanel implements vscode.Disposable {
       query: "",
       analyzer: settings?.analyzer ?? this.configuredAnalyzer(),
       searchableFields: [],
-      fieldAnalyzers: {},
+      fieldAnalyzers: settings?.fieldAnalyzers ?? {},
       pageNumber: 1,
       rows: [],
       total: "0",
@@ -300,30 +314,67 @@ export class LensPanel implements vscode.Disposable {
   }
 
   private async setAnalyzer(analyzer: AnalyzerName): Promise<void> {
-    if (this.state.analyzer === analyzer) return;
-    this.cancelCurrent();
-    this.cursors = [undefined];
-    this.update({analyzer, pageNumber: 1});
-    this.saveAnalyzerSettings();
-    if (this.state.query) await this.loadPage();
+    const selectedIndexId = this.state.selectedIndexId;
+    const changed = await this.enqueueSettingsChange(async () => {
+      if (this.state.selectedIndexId !== selectedIndexId
+          || this.state.analyzer === analyzer) {
+        return false;
+      }
+      this.cancelCurrent();
+      this.cursors = [undefined];
+      await this.saveAnalyzerSettings({
+        analyzer,
+        fieldAnalyzers: this.state.fieldAnalyzers
+      });
+      this.update({analyzer, pageNumber: 1});
+      return true;
+    });
+    if (changed && this.state.query) await this.loadPage();
   }
 
   private async setFieldAnalyzer(
     field: string,
-    analyzer: FieldAnalyzerSelection
+    analyzer: AnalyzerName
   ): Promise<void> {
-    if (!this.state.searchableFields.includes(field)
-        || this.state.fieldAnalyzers[field] === analyzer) {
-      return;
-    }
-    this.cancelCurrent();
-    this.cursors = [undefined];
-    this.update({
-      fieldAnalyzers: {...this.state.fieldAnalyzers, [field]: analyzer},
-      pageNumber: 1
+    const selectedIndexId = this.state.selectedIndexId;
+    const changed = await this.enqueueSettingsChange(async () => {
+      if (this.state.selectedIndexId !== selectedIndexId
+          || !this.state.searchableFields.includes(field)
+          || this.state.fieldAnalyzers[field] === analyzer) {
+        return false;
+      }
+      this.cancelCurrent();
+      this.cursors = [undefined];
+      const fieldAnalyzers = {...this.state.fieldAnalyzers, [field]: analyzer};
+      await this.saveAnalyzerSettings({
+        analyzer: this.state.analyzer,
+        fieldAnalyzers
+      });
+      this.update({fieldAnalyzers, pageNumber: 1});
+      return true;
     });
-    this.saveAnalyzerSettings();
-    if (this.state.query) await this.loadPage();
+    if (changed && this.state.query) await this.loadPage();
+  }
+
+  private async removeFieldAnalyzer(field: string): Promise<void> {
+    const selectedIndexId = this.state.selectedIndexId;
+    const changed = await this.enqueueSettingsChange(async () => {
+      if (this.state.selectedIndexId !== selectedIndexId
+          || !Object.prototype.hasOwnProperty.call(this.state.fieldAnalyzers, field)) {
+        return false;
+      }
+      this.cancelCurrent();
+      this.cursors = [undefined];
+      const fieldAnalyzers = {...this.state.fieldAnalyzers};
+      delete fieldAnalyzers[field];
+      await this.saveAnalyzerSettings({
+        analyzer: this.state.analyzer,
+        fieldAnalyzers
+      });
+      this.update({fieldAnalyzers, pageNumber: 1});
+      return true;
+    });
+    if (changed && this.state.query) await this.loadPage();
   }
 
   private async loadSearchableFields(): Promise<void> {
@@ -341,19 +392,14 @@ export class LensPanel implements vscode.Disposable {
         .sort((left, right) => left.localeCompare(right));
       this.searchableFieldCache.set(index.id, searchableFields);
     }
-    const saved = this.analyzerSettings.get(index.id);
     const fieldAnalyzers = Object.fromEntries(
-      searchableFields.map((field) => [
-        field,
-        saved?.fieldAnalyzers[field] ?? "inherit"
-      ])
-    ) as Record<string, FieldAnalyzerSelection>;
+      Object.entries(this.state.fieldAnalyzers)
+        .filter(([field]) => searchableFields.includes(field))
+    ) as Record<string, AnalyzerName>;
     this.update({
       searchableFields,
-      analyzer: saved?.analyzer ?? this.state.analyzer,
       fieldAnalyzers
     });
-    this.saveAnalyzerSettings();
   }
 
   private async loadPage(): Promise<void> {
@@ -421,22 +467,22 @@ export class LensPanel implements vscode.Disposable {
 
   private analyzerArgs(): string[] {
     const result = ["--analyzer", this.state.analyzer];
-    for (const field of this.state.searchableFields) {
-      const analyzer = this.state.fieldAnalyzers[field];
-      if (analyzer && analyzer !== "inherit") {
-        result.push("--field-analyzer", field, analyzer);
-      }
+    for (const [field, analyzer] of Object.entries(this.state.fieldAnalyzers)) {
+      result.push("--field-analyzer", field, analyzer);
     }
     return result;
   }
 
-  private saveAnalyzerSettings(): void {
-    const indexId = this.state.selectedIndexId;
-    if (!indexId) return;
-    this.analyzerSettings.set(indexId, {
-      analyzer: this.state.analyzer,
-      fieldAnalyzers: {...this.state.fieldAnalyzers}
-    });
+  private async saveAnalyzerSettings(settings: AnalyzerSettings): Promise<void> {
+    const index = this.selectedIndex();
+    if (!index) return;
+    await this.workspaceSettings.save(index.absolutePath, settings);
+  }
+
+  private enqueueSettingsChange<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.settingsChangeQueue.then(operation);
+    this.settingsChangeQueue = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   private configuredAnalyzer(): AnalyzerName {
@@ -555,8 +601,11 @@ export class LensPanel implements vscode.Disposable {
         <span>Used by fields that inherit the default.</span>
       </div>
       <div class="field-analyzers-section">
-        <strong>Field analyzers</strong>
-        <span>Override the default for individual searchable fields.</span>
+        <div class="field-analyzers-heading">
+          <strong>Field analyzers</strong>
+          <span>Add overrides only when needed. Settings are saved in .vscode/lucene-lens.json.</span>
+          <button id="addFieldAnalyzerButton" type="button">Add field rule</button>
+        </div>
         <div id="fieldAnalyzerList" class="field-analyzers"></div>
       </div>
     </section>
@@ -589,11 +638,6 @@ export class LensPanel implements vscode.Disposable {
 </body>
 </html>`;
   }
-}
-
-interface AnalyzerSettings {
-  analyzer: AnalyzerName;
-  fieldAnalyzers: Record<string, FieldAnalyzerSelection>;
 }
 
 function normalizePageSize(value: number): 25 | 50 | 100 | 200 {
