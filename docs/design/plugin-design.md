@@ -1,236 +1,131 @@
 # Lucene Lens VS Code 插件设计
 
-## 1. 介绍
+## 1. 文档状态
 
-Lucene Lens 是一个只读查看本地 Lucene 索引的 VS Code 插件。首版支持查看索引概览和字段能力，在页面中浏览 stored fields 与 doc values，执行受限查询，并将结果导出为 CSV。
+本文描述当前 `0.1.x` 实现，而不是未来愿景。首版执行过程参见 [implementation-plan.md](implementation-plan.md)，强制协作约束参见 [development-rules.md](../rules/development-rules.md)。
 
-插件只处理用户选择的本地 Lucene 索引目录，不修改、合并或修复索引，不直接支持 Solr、Elasticsearch/OpenSearch 数据目录和远程索引。
+当前边界：
 
-## 2. 技术设计
+- 只读查看本地 Lucene 9 索引。
+- 固定使用 Lucene 9.12.3 插件和 `lucene-backward-codecs`。
+- 支持工作区自动发现、手动目录持久化、文档浏览、查询、详情和 CSV 导出。
+- 不支持 Solr、Elasticsearch/OpenSearch 数据目录、远程索引、segment/term 页面和动态 Lucene 版本切换。
 
-### 2.1 项目目录架构
-
-```text
-vscode_lucene_lens/
-├── src/                              VS Code 扩展源码
-│   ├── commands/                     VS Code 命令
-│   ├── services/                     CLI 调用、版本选择、目录和配置服务
-│   ├── protocol/                     CLI 输出协议和领域模型
-│   ├── views/                        侧边栏入口视图
-│   ├── webview/                      Webview 面板与消息处理
-│   └── platform/                     日志、Java 探测、进程等平台能力
-├── cli/                              Java CLI Maven 多模块工程
-│   ├── pom.xml                       父 POM，统一插件和公共依赖版本
-│   ├── cli-core/                     CLI 主程序
-│   │   ├── pom.xml
-│   │   └── src/main/java/dev/lucenelens/cli/core/
-│   │       ├── command/              命令参数和调用编排
-│   │       ├── service/              功能的具体实现
-│   │       ├── spi/                  Lucene 插件接口和加载逻辑
-│   │       └── model/                结果、错误和领域数据
-│   └── cli-plugin-lucene-<major>/    每个受支持主版本一个插件模块
-│       ├── pom.xml                   只依赖一个 Lucene 主版本
-│       └── src/
-│           ├── main/java/dev/lucenelens/cli/plugin/lucene<major>/
-│           │   ├── adapter/          core SPI 的版本实现
-│           │   └── util/             直接调用该版本 Lucene API
-│           └── main/resources/META-INF/services/
-│                                       Java SPI 注册
-├── dist/                             构建和 VSIX 打包产物
-│   ├── extension/                    TypeScript 编译产物
-│   └── cli/
-│       ├── lucene-lens-cli.jar       CLI core 可执行 jar
-│       └── plugins/
-│           └── lucene-<major>/       对应主版本的 Lucene 插件 jar
-│               └── lucene-plugin.jar
-├── media/                            图标、样式和 Webview 静态资源
-├── docs/
-│   ├── design/                       技术设计
-│   ├── rules/                        开发规则
-│   └── README.md                     文档索引
-├── package.json                      扩展清单、命令、配置和构建脚本
-├── tsconfig.json                     TypeScript 配置
-├── .gitignore                        忽略 dist 和各模块 target
-├── .vscodeignore                     VSIX 文件过滤
-└── AGENTS.md                         项目文档入口
-```
-
-目录约束：
-
-- `<major>` 是 Lucene 主版本号占位符；首版只创建 `cli-plugin-lucene-9/` 和 `dist/cli/plugins/lucene-9/`，后续增加主版本时沿用相同结构。
-- `src/` 只包含 VS Code 扩展逻辑，不直接依赖 Lucene。
-- `cli/` 是独立 Maven 多模块工程，只负责单次 Lucene 读取命令。
-- `cli-core` 是 CLI 主体，负责命令、service、插件加载、JSON 输出和退出码，不依赖任何 Lucene 版本。
-- `cli-core/command` 只解析参数和编排调用，不直接访问 Lucene。
-- `cli-core/service` 放置功能的具体实现，负责参数规则、分页规则和结果组装。
-- `cli-core/model` 统一放置成功结果、错误信息、分页结构和领域数据，不再拆分 output、error、model 包。
-- CLI 公共入口统一完成 JSON 序列化、异常转换和退出码设置。
-- `cli-core/spi` 定义版本无关的插件接口，方法参数和返回值只能使用 core model，不能暴露 Lucene 类型。
-- 每个版本插件通过 SPI 声明非空的 Analyzer 列表，包括稳定 ID 和显示名称；core 校验 ID 格式、重复项，并拒绝查询或导出使用未声明的 Analyzer。
-- `cli-plugin-lucene-<major>/util` 是唯一允许直接导入和调用 `org.apache.lucene.*` 的位置。
-- 调用方向固定为 `command -> service -> spi <- plugin adapter -> util -> Lucene API`。
-- 插件 `adapter` 负责把 core SPI 适配到当前版本的 util；service 不通过版本判断或反射选择实现。
-- 每个 `cli-plugin-lucene-<major>` 只依赖一个 Lucene 主版本，并生成包含该版本 Lucene 运行依赖的插件 jar。
-- 首版 Lucene 9 插件包含 Query Parser、通用 Analyzer、Smart Chinese Analyzer 和 `lucene-backward-codecs`；使用 Lucene 9.12.3 读取同一主版本的较早默认索引格式。
-- 插件构建时不能把 `cli-core` 类打进插件 jar；core SPI 由父 class loader 提供，插件 jar 只包含插件实现和 Lucene 依赖。
-- CLI core 每次运行只加载用户指定的一个插件 jar，不扫描或同时加载其他版本插件。
-- `dist/` 完全由构建流程生成，不手工维护，也不提交 Git。
-- `dist/cli/lucene-lens-cli.jar` 是唯一可执行 CLI；`dist/cli/plugins/` 只存放版本插件。
-- `media/` 不放业务逻辑，Webview 的数据请求统一经过扩展进程。
-- TypeScript 与 Java 共享的是 JSON 协议定义，不共享源代码或运行时对象。
-- 构建顺序为：构建 CLI core、构建所有版本插件、复制到 `dist/cli/`、编译 TypeScript 到 `dist/extension/`、打包 VSIX。
-- `.vscodeignore` 必须排除源码和中间文件，但不能排除 VSIX 运行所需的 `dist/`。
-
-### 2.2 命令与配置
-
-#### 2.2.1 命令列表
-
-插件功能以 VS Code 命令组织：
-
-| 命令 ID | 标题 | 功能说明 |
-| --- | --- | --- |
-| `luceneLens.open` | Open Lucene Lens | 在编辑区打开或聚焦 Lucene Lens 页面 |
-| `luceneLens.openIndex` | Open Lucene Index | 由侧边栏索引项调用，打开页面并选中指定索引；不显示在命令面板 |
-| `luceneLens.chooseIndexDirectory` | Select Lucene Index Directory | 手动选择、验证并打开工作区内外的 Lucene 索引目录 |
-| `luceneLens.removeIndex` | Remove Lucene Index from List | 由手动索引项的删除按钮调用，只移除持久化引用，不删除索引文件；不显示在命令面板 |
-| `luceneLens.refreshIndexes` | Refresh Lucene Indexes | 刷新并重新校验侧边栏中的自动发现和手动加入索引 |
-| `luceneLens.rescanWorkspace` | Rescan Workspace Indexes | 重新扫描当前工作区中的 Lucene 索引目录并更新侧边栏及当前页面 |
-| `luceneLens.export` | Export Results | 将当前文档或查询结果导出为 CSV |
-| `luceneLens.showLogs` | Show Lucene Lens Logs | 查看命令耗时、结果数量、错误码和诊断日志 |
-
-页面不再提供索引选择控件；侧边栏索引项通过内部命令把索引 ID 传给单例页面。页面内的搜索、查看文档和分页不单独注册 VS Code 命令。耗时操作通过 VS Code 进度通知取消；目录、权限、索引损坏、版本不兼容和查询语法错误直接显示在页面中。
-
-#### 2.2.2 CLI 命令协议
-
-##### 2.2.2.1 调用形式
-
-扩展使用进程 API 的参数数组调用，不经过 shell：
+## 2. 总体架构
 
 ```text
-java -Xmx512m -jar dist/cli/lucene-lens-cli.jar \
-  --plugin dist/cli/plugins/lucene-<major>/lucene-plugin.jar \
-  documents \
-  --index /absolute/path/to/index \
-  --cursor 100 \
-  --limit 100 \
-  --output json
+VS Code command / sidebar
+           |
+           v
+LensPanel + IndexDirectoryService + WorkspaceSettingsService
+           |
+           v
+JavaCommandRunner -- one process per operation
+           |
+           v
+cli-core (Picocli + JSON + PluginLoader)
+           |
+           v
+LucenePlugin SPI
+           |
+           v
+Lucene9Plugin adapter -> Lucene9Util -> Lucene 9 API
 ```
 
-路径和查询内容均作为独立参数传递。标准输入默认关闭，不用于维护交互会话。
+Extension Host 不持有 Lucene reader。一次用户操作对应一次 Java CLI 进程，处理完成后进程退出并释放资源；不存在后台服务或常驻 Java 进程。
 
-core 根据 `--plugin` 创建独立 class loader，通过 Java `ServiceLoader` 获取 SPI 实现；每次进程只加载一个插件，并在命令结束时关闭 class loader。`version` 命令返回插件声明的 Analyzer 能力，例如：
+### 2.1 当前目录
 
-```json
-{
-  "analyzers": [
-    {"name": "standard", "label": "Standard"},
-    {"name": "smartcn", "label": "Smart Chinese"}
-  ]
-}
+```text
+src/
+  extension.ts
+  platform/javaCommandRunner.ts
+  protocol/{types,validation}.ts
+  services/{indexDirectoryService,workspaceSettingsService}.ts
+  views/indexTree.ts
+  webview/{lensPanel,main}.ts
+cli/
+  cli-core/
+    .../core/{Main,CliCommand}.java
+    .../core/model/
+    .../core/spi/{LucenePlugin,PluginLoader}.java
+  cli-plugin-lucene-9/
+    .../lucene9/adapter/Lucene9Plugin.java
+    .../lucene9/util/Lucene9Util.java
+    .../META-INF/services/dev.lucenelens.cli.core.spi.LucenePlugin
+dist/
+  extension/{extension,webview}.js
+  cli/lucene-lens-cli.jar
+  cli/plugins/lucene-9/lucene-plugin.jar
 ```
 
-Analyzer `name` 是 CLI 参数和工作区配置使用的稳定 ID，必须匹配 `[a-z][a-z0-9_-]{0,63}`；`label` 仅用于界面显示。列表不能为空，名称不能重复。
+`dist/` 和 Maven `target/` 均由构建生成。当前代码没有独立的 TypeScript `commands/`、Java `command/`、Java `service/` 或 `luceneVersionResolver` 模块。
 
-成功时 stdout 输出一个 JSON 对象：
+### 2.2 模块职责
 
-```json
-{
-  "protocolVersion": 1,
-  "cliVersion": "0.1.0",
-  "result": {
-    "items": [
-      { "term": "lucene", "docFreq": 12 }
-    ],
-    "nextCursor": "bHVjZW5l",
-    "hasMore": true
-  }
-}
-```
+- `extension.ts`：创建依赖、注册 VS Code 命令和配置监听。
+- `JavaCommandRunner`：解析 Java、设置堆和超时、启动/取消一次性进程、限制输出并解析 JSON。
+- `IndexDirectoryService`：扫描候选目录、执行 `probe`、合并自动和手动索引、维护列表事件。
+- `WorkspaceSettingsService`：校验并串行读写 `.vscode/lucene-lens.json`。
+- `IndexTree`：渲染侧边栏索引及手动索引删除入口。
+- `LensPanel`：维护单例页面、页面状态、CLI 调用和导出编排。
+- `webview/main.ts`：渲染状态和发送用户操作，不直接访问 Node.js 或 VS Code API。
+- `cli-core`：Picocli 参数、SPI 加载、公共校验、JSON 响应和退出码，不依赖 Lucene。
+- `Lucene9Plugin`：声明插件版本、Lucene 版本和 Analyzer，转发 SPI 调用。
+- `Lucene9Util`：只读打开 Lucene 9 索引并实现字段、文档、查询和导出。
 
-失败时 stdout 仍输出一个结构化 JSON 对象，同时以非零退出码结束：
+## 3. VS Code 接口
 
-```json
-{
-  "protocolVersion": 1,
-  "cliVersion": "0.1.0",
-  "error": {
-    "code": "INDEX_VERSION_UNSUPPORTED",
-    "message": "The index version is not supported by this Lucene plugin.",
-    "retryable": false
-  }
-}
-```
+### 3.1 命令
 
-stderr 仅记录诊断日志。若进程被强制终止、JVM 无法启动或 stdout 不是合法 JSON，扩展应产生自己的 `PROCESS_*` 错误。
-
-##### 2.2.2.2 子命令
-
-| 子命令 | 作用 |
+| 命令 ID | 用途 |
 | --- | --- |
-| `version` | 返回 CLI、协议和 Lucene 版本 |
-| `probe` | 检查指定插件能否只读打开索引，并返回数据版本、插件版本和兼容性 |
-| `summary` | 获取索引概览并验证目录 |
-| `fields` | 获取字段能力 |
-| `documents` | 分页读取文档的 stored fields 和 doc values |
-| `document` | 读取一个文档的 stored fields 和 doc values 详情 |
-| `query` | 执行受限查询 |
-| `export` | 将文档或查询结果以 CSV 流式导出到显式目标文件 |
+| `luceneLens.open` | 打开或聚焦 Lucene Lens 页面 |
+| `luceneLens.openIndex` | 侧边栏内部调用，按索引 ID 打开页面；不在命令面板展示 |
+| `luceneLens.chooseIndexDirectory` | 手动选择、验证并保存索引目录 |
+| `luceneLens.removeIndex` | 删除手动引用，不删除索引文件 |
+| `luceneLens.refreshIndexes` | 刷新侧边栏索引 |
+| `luceneLens.rescanWorkspace` | 从页面重新扫描并同步侧边栏 |
+| `luceneLens.export` | 导出当前文档或查询结果 |
+| `luceneLens.showLogs` | 打开 `Lucene Lens` Output Channel |
 
-侧边栏打开页面、工作区重扫、切换下拉选项和翻页属于 TypeScript/Webview 编排，不要求存在同名 CLI 子命令。
+`openIndex` 由视图项调用。`removeIndex` 虽在扩展清单中贡献，但通过菜单条件从命令面板隐藏，只显示在手动索引项上。
 
-首版不实现 `segments`、`terms` 子命令及对应界面；后续增加时再扩展协议和页面导航。
+### 3.2 配置
 
-##### 2.2.2.3 退出码与错误码
-
-建议退出码：
-
-| 退出码 | 含义 |
-| --- | --- |
-| `0` | 成功 |
-| `2` | 参数或协议错误 |
-| `3` | 索引目录、权限、损坏或版本错误 |
-| `4` | 查询或分页错误 |
-| `10` | 未分类内部错误 |
-
-至少定义：
-
-- `INVALID_REQUEST`
-- `DIRECTORY_NOT_FOUND`
-- `DIRECTORY_NOT_READABLE`
-- `NOT_A_LUCENE_INDEX`
-- `INDEX_CORRUPT`
-- `INDEX_VERSION_UNSUPPORTED`
-- `LUCENE_PLUGIN_NOT_AVAILABLE`
-- `LUCENE_PLUGIN_LOAD_FAILED`
-- `LUCENE_PLUGIN_API_INCOMPATIBLE`
-- `LUCENE_VERSION_DETECTION_FAILED`
-- `FIELD_NOT_FOUND`
-- `QUERY_PARSE_ERROR`
-- `LIMIT_EXCEEDED`
-- `REQUEST_TIMEOUT`
-- `REQUEST_CANCELLED`
-- `JAVA_HOME_INVALID`
-- `JAVA_NOT_FOUND`
-- `JAVA_VERSION_UNSUPPORTED`
-- `INTERNAL_ERROR`
-
-索引引用了当前插件未注册的 codec 时返回 `INDEX_VERSION_UNSUPPORTED`，不得将 Lucene 的 `Could not load codec` 异常泛化为 `INTERNAL_ERROR`。
-
-#### 2.2.3 配置项
-
-| 配置键 | 默认值 | 用途 |
+| 配置键 | 默认值 | 当前用途 |
 | --- | --- | --- |
-| `luceneLens.java.home` | 空 | 可选的 Java Home（JDK 安装目录）；未配置时使用系统 `PATH` 中的 `java` |
-| `luceneLens.cli.maxHeap` | `512m` | 单次 Java CLI 命令最大堆 |
-| `luceneLens.pageSize` | `50` | 默认分页大小 |
-| `luceneLens.query.maxHits` | `10000` | 单次查询允许遍历的最大命中数 |
-| `luceneLens.query.analyzer` | `standard` | 首选默认 Analyzer ID；若当前插件未声明该 ID，则使用插件声明列表的第一项 |
-| `luceneLens.requestTimeout` | `30000` | 普通请求超时，单位毫秒 |
-| `luceneLens.showSensitiveValuesInLogs` | `false` | 是否允许日志记录字段值 |
+| `luceneLens.java.home` | 空 | Java Home；为空时使用 `PATH` 中的 `java` |
+| `luceneLens.cli.maxHeap` | `512m` | 每个 CLI 子进程的最大堆 |
+| `luceneLens.pageSize` | `50` | 初始页大小，可选 25、50、100、200 |
+| `luceneLens.query.maxHits` | `10000` | 查询和导出命中上限 |
+| `luceneLens.query.analyzer` | `standard` | 首选默认 Analyzer |
+| `luceneLens.requestTimeout` | `30000` | CLI 超时，单位毫秒 |
+| `luceneLens.showSensitiveValuesInLogs` | `false` | 预留项；当前日志实现不读取该值，也不记录字段值 |
 
-所有分页参数还应有 CLI 硬上限，不能仅依赖 VS Code 配置。
+## 4. 索引发现与持久化
 
-查询页面首次修改 Analyzer 时，在索引所属工作区创建以下配置文件；文件可由工作区自行决定是否纳入版本控制：
+### 4.1 自动发现
+
+1. 在已打开工作区中查找 `**/segments_*`。
+2. 过滤路径中包含 `.git`、`node_modules`、`dist`、`target`、`.idea` 或 `.vscode` 的候选。
+3. 将 segment 文件的父目录去重。
+4. 使用固定的 Lucene 9 插件执行 `probe`。
+5. 只保留 `compatible: true` 且 `detectedLuceneMajor: 9` 的目录。
+
+扫描依赖 `vscode.workspace.findFiles` 的默认排除行为，并额外执行上述固定目录过滤；代码没有单独读取或合并 `files.exclude`、`search.exclude`。
+
+### 4.2 手动添加与删除
+
+- 用户选择目录后先执行相同 `probe`，验证成功才加入列表。
+- 手动目录以 `file:` URI 写入工作区 `.vscode/lucene-lens.json`。
+- 工作区内索引写入所属 workspace folder；工作区外索引写入第一个 workspace folder。
+- 没有 workspace folder 时无法保存，操作会给出错误。
+- 删除按钮只移除 `manualIndexes` 引用。若同一路径也由自动扫描发现，它继续显示，但 `manuallyAdded` 变为 `false`。
+
+### 4.3 配置文件
+
+当前格式版本为 `1`：
 
 ```json
 {
@@ -249,225 +144,136 @@ stderr 仅记录诊断日志。若进程被强制终止、JVM 无法启动或 st
 }
 ```
 
-`manualIndexes` 使用规范化文件 URI，并由索引所属 workspace folder 保存；工作区外索引保存到第一个 workspace folder。旧文件缺少该字段时按空列表处理。Analyzer 设置中，工作区内索引使用相对于所属 workspace folder 的 `/` 分隔路径，索引就是 workspace folder 时使用 `"."`；工作区外索引使用规范化文件 URI。读取时必须校验版本、手动索引 URI、Analyzer 名称和字段映射，格式错误时不得覆盖原文件。
+工作区内索引的 Analyzer 配置使用相对路径，工作区根目录使用 `"."`；外部索引使用 `file:` URI。读取时严格校验结构。写入通过队列串行执行，避免相互覆盖。
 
-### 2.3 交互设计
+## 5. Java CLI 与插件
 
-#### 2.3.1 侧边栏索引导航
+### 5.1 进程模型
 
-Activity Bar 增加 `Lucene Lens` 图标，对应的 `Indexes` 视图直接承担索引发现和导航：
-
-1. 视图首次展开时立即扫描当前工作区，并显示扫描中状态。
-2. 扫描成功后逐项展示索引名称、Lucene 版本和路径 tooltip；不再显示中转性质的打开按钮。
-3. 点击索引项执行内部命令 `luceneLens.openIndex`。如果页面尚未打开，在编辑区创建单例 Webview 页面并选中该索引；如果页面已经打开，则聚焦页面并切换索引。
-4. 视图标题栏提供目录选择按钮，执行 `luceneLens.chooseIndexDirectory`。用户可以选择工作区内外的具体索引目录；扩展执行只读 `probe`，验证成功后把目录加入列表并立即打开。
-5. 手动加入的目录写入工作区 `.vscode/lucene-lens.json`，关闭页面或重启编辑器后继续参与校验和列表合并；自动扫描和手动选择得到的相同目录只展示一次。
-6. 手动索引项提供删除按钮，执行 `luceneLens.removeIndex`。删除只移除 JSON 中的目录引用；如果同一路径也能被工作区自动扫描到，则保留为自动索引，任何情况下都不得删除索引文件。
-7. 视图标题栏提供刷新按钮，执行 `luceneLens.refreshIndexes`；页面内重新扫描得到的结果也同步到侧边栏。
-8. 未发现索引、工作区未受信任或扫描失败时，在列表中显示对应状态。
-9. 侧边栏和页面共享扩展进程缓存的扫描结果，点击索引时不重复执行 `probe`。
-
-#### 2.3.2 页面布局
-
-页面使用“顶部工具栏 + 数据表格 + 页脚分页”的固定结构：
+调用形式：
 
 ```text
-┌──────────────────────────────────────────────────────────────────────┐
-│ [ Lucene 9 (Data) ▼ ] [ 搜索框              ] [查询设置] [导出] │
-├──────────────────────────────────────────────────────────────────────┤
-│ 查询设置：默认分词器 [ Standard ▼ ]              [添加字段规则]   │
-│ field_b [Keyword ▼] [删除]  field_c [CJK ▼] [删除]                │
-├──────────────────────────────────────────────────────────────────────┤
-│ doc ID │ score │ field_a │ field_b │ field_c │ ...                 │
-│────────┼───────┼─────────┼─────────┼─────────┼─────────────────────│
-│  101   │ 1.24  │ ...     │ ...     │ ...     │                     │
-│  102   │ 0.98  │ ...     │ ...     │ ...     │                     │
-│  ...                                                               │
-├──────────────────────────────────────────────────────────────────────┤
-│ 共 1,240 条       每页 [50 ▼]       [上一页]  第 2 页  [下一页]    │
-└──────────────────────────────────────────────────────────────────────┘
+java -Xmx<heap> -jar dist/cli/lucene-lens-cli.jar \
+  --plugin dist/cli/plugins/lucene-9/lucene-plugin.jar \
+  <subcommand> [arguments] --output json
 ```
 
-- 顶部左侧是 Lucene 版本下拉选项。
-- 顶部右侧是当前索引的搜索框。
-- 查询设置默认收起，展开后可选择默认 Analyzer；字段默认继承默认值，不逐项展示。
-- 字段覆盖通过“添加字段规则”按需创建，添加时分别从字段下拉和 Analyzer 下拉中选择，已配置字段可修改或删除。
-- 默认 Analyzer 和字段覆盖按索引持久化到工作区 `.vscode/lucene-lens.json`；切换索引、关闭页面或重启编辑器后均可恢复。
-- 默认或字段 Analyzer 切换后，已有查询立即从第一页重新执行；查询结果导出使用完全相同的 Analyzer 配置。
-- 中间区域使用普通表格展示文档数据。
-- 页脚固定展示结果数量、每页条数、当前页和翻页按钮。
-- 页面不重复展示索引目录下拉选项，索引导航统一由侧边栏承担。
-- 页面尺寸变化时，搜索框优先伸缩。
+- 使用 `spawn` 参数数组，`shell: false`。
+- 首次调用解析并缓存 Java 路径与主版本；配置变化时清除缓存。
+- 要求 Java 11 或更高版本。
+- 普通超时取 `luceneLens.requestTimeout`，取消或超时会终止子进程。
+- stdout 最大 16 MiB，stderr 最多保留 1 MiB。
+- 扩展销毁时终止仍在运行的子进程。
 
-#### 2.3.3 工作区扫描
+### 5.2 插件加载
 
-页面打开后执行以下扫描流程：
+`PluginLoader` 为显式 `--plugin` jar 创建一个 `URLClassLoader`，通过 `ServiceLoader` 加载 `LucenePlugin`：
 
-1. 检查当前工作区是否受信任；未受信任时不启动 Java CLI。
-2. 使用 VS Code Workspace API 在所有 workspace folder 中查找 `segments_*` 文件。
-3. 排除 `.git`、`node_modules`、`dist`、`target` 以及工作区 `files.exclude`、`search.exclude` 配置命中的目录。
-4. 将 `segments_*` 的父目录去重，得到候选 Lucene 索引目录。
-5. 对每个候选目录执行 `probe`，验证索引并读取索引数据的 Lucene 主版本。
-6. 将数据版本与 `dist/cli/plugins/` 中已有插件匹配，生成该索引可选择的版本列表。
-7. 验证成功的目录加入侧边栏索引列表；无效目录不展示，错误写入 Output Channel。
-8. 多根工作区使用“工作区名称 / 相对路径”作为显示文本，绝对路径作为内部唯一标识。
+- 必须且只能发现一个 SPI 实现。
+- Analyzer 列表必须非空，ID 和 label 必须合法且 ID 唯一。
+- 命令结束时关闭 class loader。
+- core 不扫描 `dist/cli/plugins`，也不同时加载多个版本。
 
-扫描期间侧边栏显示 `Scanning workspace indexes...`，页面中的版本下拉和搜索框均禁用。扫描完成后：
+当前 Extension Host 固定传入 Lucene 9 插件路径。新增版本模块本身并不会自动出现在 UI 中，还需要先设计并实现插件发现与版本选择。
 
-- 仅由侧边栏触发扫描时只更新索引列表，不自动占用编辑区。
-- 页面已打开或通过 `luceneLens.open` 打开时，保留当前有效选择；没有当前选择时默认加载第一个索引的第一页文档。
-- 没有索引时表格区域显示 `No Lucene indexes found in the current workspace.`。
-- 用户执行 `luceneLens.rescanWorkspace` 时清空旧扫描结果并重新执行上述流程。
+### 5.3 Analyzer 声明
 
-#### 2.3.4 索引选择
+Analyzer 能力由插件返回，不由 Extension Host 硬编码。Lucene 9 插件当前声明：
 
-用户点击侧边栏索引项或成功手动选择索引目录时：
-
-1. 取消当前索引尚未完成的搜索或分页进程。
-2. 清空搜索框、表格和分页状态。
-3. 更新 Lucene 版本下拉，默认选中与索引数据主版本相同的插件。
-4. 使用默认插件加载新索引的字段信息和第一页文档。
-5. 根据 stored fields 和 doc values 生成表格列。
-6. 二进制字段仅展示 `[binary: N bytes]`，不直接展开完整内容。
-
-每个侧边栏索引项保留绝对路径作为 tooltip，避免同名目录无法区分。
-
-#### 2.3.5 Lucene 版本选择
-
-- 版本下拉只列出 `dist/cli/plugins/` 中实际存在的 Lucene 主版本插件。
-- 首版只打包 Lucene 9 插件，因此版本下拉首版只有 Lucene 9；后续加入插件后自动增加对应选项。
-- 默认选中索引数据自身的主版本，并在选项中标记 `Data version`。
-- 如果没有与数据版本完全一致的插件，则选择第一个通过 `probe` 的兼容插件，并在下拉旁显示提示。
-- 用户可以手动选择其他版本插件；切换前先使用目标插件执行 `probe`。
-- 目标插件不兼容时保持原选择和表格内容，并在版本下拉下方显示错误。
-- 目标插件兼容时取消当前请求，清空查询和分页状态，然后使用新插件重新加载字段和第一页文档。
-- 手动选择只对当前索引和当前页面会话生效，不修改索引数据，也不改变其他索引的版本选择。
-
-#### 2.3.6 搜索
-
-- 搜索框只作用于当前由侧边栏选中的索引。
-- 按 Enter 或点击搜索图标后执行查询。
-- 查询设置根据当前版本插件的声明展示 Analyzer；Lucene 9 插件声明 Standard、Keyword、Whitespace、Simple、CJK 和 Smart Chinese。
-- 每个 `indexed` 字段默认继承默认 Analyzer；仅实际添加的覆盖规则显示在列表中，添加规则时通过下拉选择尚未配置的字段。
-- 字段名称来自只读 `fields` 命令，Extension Host 再次校验，不能由 Webview 任意注入。
-- 空搜索内容表示取消查询并恢复普通文档浏览。
-- 查询使用 Lucene Query Parser；语法错误显示在搜索框下方，不清空现有表格。
-- 新搜索总是从第一页开始，并取消上一次尚未完成的查询。
-- 搜索结果表格固定展示 `doc ID` 和 `score`，其余列展示 stored fields 和 doc values。
-
-#### 2.3.7 表格与分页
-
-- 普通浏览按内部 doc ID 排序；查询结果按 score 排序。
-- 表头固定，表格内容区域独立滚动。
-- 字段较多时允许横向滚动，不压缩到无法阅读。
-- 单元格内容单行截断，点击行后在页面右侧或弹层中查看完整文档详情。
-- 同一字段同时存在 stored field 和 doc values 时分别显示，并在列名或详情中标明数据来源。
-- 默认每页 50 条，可选 25、50、100、200。
-- 页脚提供上一页和下一页；第一页禁用上一页，没有更多结果时禁用下一页。
-- 切换每页条数后回到第一页。
-- 翻页只替换表格数据，不重新扫描工作区，也不重新探测 Lucene 版本。
-
-#### 2.3.8 页面状态
-
-页面至少处理以下状态：
-
-| 状态 | 页面表现 |
+| ID | 显示名称 |
 | --- | --- |
-| 工作区未受信任 | 不启动 CLI，提示用户信任工作区后重试 |
-| 扫描中 | 禁用下拉和搜索，表格显示 loading |
-| 未发现索引 | 显示空状态和重新扫描入口 |
-| 正在加载数据 | 保留页面框架，表格显示 loading |
-| 版本插件不兼容 | 保留原版本和表格，在版本下拉下方显示错误 |
-| 查询语法错误 | 搜索框下方显示错误，保留上一次成功结果 |
-| 索引读取错误 | 表格区域显示错误和重试入口 |
-| CLI 被取消 | 停止 loading，不弹出错误通知 |
+| `standard` | Standard |
+| `keyword` | Keyword |
+| `whitespace` | Whitespace |
+| `simple` | Simple |
+| `cjk` | CJK |
+| `smartcn` | Smart Chinese |
 
-### 2.4 数据结构
+`version` 返回该列表。页面只展示插件声明的 Analyzer；查询和导出前，core 再次拒绝未声明的 ID。
 
-TypeScript 与 Java 通过 JSON 交换数据。协议模型不能包含 Lucene 运行时对象。插件路径只保留在 Extension Host；索引绝对路径仅作为下拉选项 tooltip 发送给 Webview。
+### 5.4 子命令
 
-#### 2.4.1 工作区索引
+| 子命令 | 作用 |
+| --- | --- |
+| `version` | 返回 CLI、协议、Java、插件、Lucene 版本和 Analyzer 列表 |
+| `probe` | 检查目录能否由当前插件只读打开 |
+| `summary` | 返回索引概览；当前 UI 未单独展示该结果 |
+| `fields` | 返回查询所需字段名和 `indexed` 标记 |
+| `documents` | 按内部 doc ID cursor 分页读取文档 |
+| `document` | 读取单个文档详情 |
+| `query` | 使用 Query Parser 和 `searchAfter` 分页查询 |
+| `export` | 将普通文档或查询结果流式写为 CSV |
 
-Extension Host 内部使用以下结构保存扫描和版本匹配结果：
+首版不实现 `segments` 和 `terms`。
 
-```ts
-interface ResolvedIndex {
-  id: string;
-  workspaceFolder: string;
-  relativePath: string;
-  absolutePath: string;
-  displayName: string;
-  detectedLuceneMajor: number;
-  selectedLuceneMajor: number;
-  plugins: LucenePluginRef[];
-  summary?: IndexSummary;
-}
+### 5.5 响应与退出码
 
-interface LucenePluginRef {
-  major: number;
-  pluginPath: string;
-  compatibility: "unknown" | "compatible" | "incompatible";
-}
-```
+成功：
 
-发送给 Webview 的版本列表使用精简结构，避免暴露插件路径。索引列表只由 Extension Host 中的侧边栏维护，Webview 只接收当前索引 ID：
-
-```ts
-interface VersionOption {
-  major: number;
-  label: string;
-  isDataVersion: boolean;
-  compatibility: "unknown" | "compatible" | "incompatible";
+```json
+{
+  "protocolVersion": 1,
+  "cliVersion": "0.1.0",
+  "result": {}
 }
 ```
 
-`LucenePluginRef` 只存在于 Extension Host。Webview 只接收不包含插件路径的 `VersionOption`。
+失败：
 
-#### 2.4.2 索引与字段
-
-```ts
-interface IndexSummary {
-  numDocs: number;
-  maxDoc: number;
-  deletedDocs: number;
-  segmentCount: number;
-  createdVersion?: string;
-  commitGeneration?: string;
-  commitUserData: Record<string, string>;
-}
-
-interface FieldSummary {
-  name: string;
-  indexed: boolean;
-  indexOptions?: string;
-  docValuesType?: string;
-  hasTermVectors: boolean;
-  pointDimensionCount: number;
-  variesBySegment: boolean;
+```json
+{
+  "protocolVersion": 1,
+  "cliVersion": "0.1.0",
+  "error": {
+    "code": "INDEX_VERSION_UNSUPPORTED",
+    "message": "The index version is not supported by this Lucene plugin.",
+    "retryable": false
+  }
 }
 ```
 
-`commitGeneration` 使用字符串传输，避免 Java `long` 超出 JavaScript 安全整数范围。字段能力由 CLI 合并所有 segment 后返回。Lucene 的 `FieldInfo` 不记录字段是否 stored，因此 stored fields 以实际文档读取结果为准，不在字段能力接口中推断。
+stdout 只包含一个 JSON 对象，stderr 用于诊断。退出码为：
 
-#### 2.4.3 文档与表格
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 成功 |
+| `2` | 参数错误 |
+| `3` | 目录、索引、权限、损坏或版本错误 |
+| `4` | 查询、文档 ID 或分页错误 |
+| `10` | 其他内部错误 |
 
-stored field 需要保留原始类型，并支持同名字段出现多次。doc values 按 Lucene 类型读取，字节类值使用可展示文本或 Base64 表示：
+## 6. 查询、分页与数据
+
+### 6.1 查询
+
+- 未输入查询时调用 `documents`；有查询时调用 `query`。
+- 未指定字段时使用索引中的可查询字段构建 `MultiFieldQueryParser`。
+- 默认 Analyzer 优先使用 `luceneLens.query.analyzer`；若插件未声明该 ID，使用声明列表第一项。
+- 字段级覆盖通过重复的 `--field-analyzer <field> <id>` 传递，并由 `PerFieldAnalyzerWrapper` 应用。
+- Analyzer 变化后清除 cursor 并回到第一页。
+- 查询结果与查询导出使用同一套 Analyzer 设置。
+
+### 6.2 分页与限制
+
+- 页面大小为 25、50、100 或 200；CLI 的 `limit` 允许范围为 1 到 1000。
+- 普通文档 cursor 表示下一内部 doc ID。
+- 查询 cursor 保存 `searchAfter` 所需的 score 和 doc ID。
+- `total` 使用字符串，避免跨语言整数精度问题。
+- `totalRelation` 为 `exact` 或 `lowerBound`；达到 `maxHits` 时可以返回下界。
+- Webview 只渲染当前页，Extension Host 保存已访问页的 cursor 以支持上一页。
+- 导出在 Java 侧流式写入，避免把完整 CSV 放入 stdout 或 Extension Host 内存。
+
+### 6.3 文档值
 
 ```ts
 type StoredValue =
-  | { type: "string"; value: string }
-  | { type: "int" | "long" | "float" | "double"; value: string }
-  | { type: "binary"; base64?: string; byteLength: number };
-
-interface BytesValue {
-  text?: string;
-  base64?: string;
-  byteLength: number;
-}
+  | {type: "string"; value: string}
+  | {type: "int" | "long" | "float" | "double"; value: string}
+  | {type: "binary"; base64?: string; byteLength: number};
 
 type DocValue =
-  | { type: "numeric" | "sortedNumeric"; values: string[] }
-  | { type: "binary" | "sorted" | "sortedSet"; values: BytesValue[] };
+  | {type: "numeric" | "sortedNumeric"; values: string[]}
+  | {type: "binary" | "sorted" | "sortedSet"; values: BytesValue[]};
 
 interface DocumentRow {
   docId: number;
@@ -475,262 +281,124 @@ interface DocumentRow {
   storedFields: Record<string, StoredValue[]>;
   docValues: Record<string, DocValue>;
 }
-
-interface TableColumn {
-  field: string;
-  label: string;
-  source: "stored" | "docValues";
-  valueType: string;
-}
 ```
 
-数值使用字符串传输；二进制值在列表中只返回长度，查看详情时才按大小限制读取内容。表格列取 stored fields 与 doc values 的并集。
+数值以字符串跨协议传输。同名 stored field 保留多值。二进制内容受 1 MiB 上限保护，列表请求默认只返回必要信息。
 
-#### 2.4.4 分页
+## 7. TypeScript 状态与协议
 
-CLI 使用 cursor 返回下一页，Webview 使用页码展示：
-
-```ts
-interface PageResult<T> {
-  items: T[];
-  total: string;
-  totalRelation: "exact" | "lowerBound";
-  nextCursor?: string;
-  hasMore: boolean;
-}
-
-interface PageState {
-  pageNumber: number;
-  pageSize: 25 | 50 | 100 | 200;
-  query: string;
-  cursors: Record<number, string | undefined>;
-}
-```
-
-Extension Host 保存已经访问过的页码与 cursor 映射，用于上一页和下一页。项目不考虑浏览期间索引变化，因此 cursor 不绑定 commit。`totalRelation` 为 `lowerBound` 时，页面将总数显示为“至少 N 条”。
-
-#### 2.4.5 页面状态
+关键结构以 `src/protocol/types.ts` 为唯一源码事实：
 
 ```ts
-type PageStatus =
-  | "untrusted"
-  | "scanning"
-  | "empty"
-  | "loading"
-  | "ready"
-  | "error"
-  | "cancelled";
-
-interface LensPageState {
-  status: PageStatus;
-  selectedIndexId?: string;
-  versions: VersionOption[];
-  selectedLuceneMajor?: number;
-  fields: FieldSummary[];
-  columns: TableColumn[];
-  rows: DocumentRow[];
-  page: PageState;
-  total: string;
-  analyzer: AnalyzerName;
-  analyzers: AnalyzerDefinition[];
-  searchableFields: string[];
-  fieldAnalyzers: Record<string, AnalyzerName>;
-  error?: string;
+interface ResolvedIndex {
+  id: string;
+  absolutePath: string;
+  displayName: string;
+  description: string;
+  detectedLuceneMajor: number;
+  manuallyAdded: boolean;
 }
 
-interface AnalyzerDefinition {
+interface FieldSummary {
   name: string;
-  label: string;
+  indexed: boolean;
 }
-```
 
-Webview 只根据 `LensPageState` 渲染，不自行访问文件系统或启动 CLI。
-
-`probe` 返回的数据至少包含：
-
-```ts
 interface ProbeResult {
   detectedLuceneMajor: number;
   pluginLuceneMajor: number;
   compatible: boolean;
+  createdVersion?: string;
+}
+
+interface LensPageState {
+  status: PageStatus;
+  selectedIndexId?: string;
+  selectedLuceneMajor?: number;
+  rows: DocumentRow[];
+  pageNumber: number;
+  pageSize: 25 | 50 | 100 | 200;
+  total: string;
+  totalRelation: "exact" | "lowerBound";
+  query: string;
+  analyzer: string;
+  analyzers: AnalyzerDefinition[];
+  searchableFields: string[];
+  fieldAnalyzers: Record<string, string>;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  error?: string;
 }
 ```
 
-#### 2.4.6 CLI 响应
+Webview 可发送 `ready`、`rescan`、`search`、Analyzer 设置、分页、文档详情和导出意图。Extension Host 只发送完整页面状态、文档详情或通知。所有入站消息都经过 `validation.ts` 校验。
 
-```ts
-interface CliError {
-  code: string;
-  message: string;
-  retryable: boolean;
-}
+## 8. 页面交互
 
-type CliResponse<T> =
-  | {
-      protocolVersion: number;
-      cliVersion: string;
-      pluginVersion?: string;
-      luceneVersion?: string;
-      result: T;
-    }
-  | {
-      protocolVersion: number;
-      cliVersion: string;
-      error: CliError;
-    };
+### 8.1 侧边栏
+
+- Activity Bar 中的 `Lucene Lens / Indexes` 是索引导航入口。
+- 点击索引打开单例页面并选择该索引。
+- 标题栏提供手动选择目录和刷新。
+- 只有手动索引项显示删除按钮。
+- 自动扫描与手动引用按绝对路径去重。
+
+### 8.2 主页面
+
+- 顶部展示固定且不可编辑的 `Lucene 9` 版本标识、查询框、Query Settings 和导出按钮。
+- 页面不重复提供索引选择器，索引由侧边栏驱动。
+- Query Settings 将默认 Analyzer 与字段覆盖紧凑排列；字段规则可添加和删除。
+- 表格显示当前页 stored fields 和 doc values，点击行查看完整详情。
+- 页脚提供页大小、上一页和下一页。
+
+页面状态包括 `untrusted`、`scanning`、`empty`、`loading`、`ready`、`error` 和 `cancelled`。工作区未受信任时不启动 CLI；取消时停止 loading，不把取消当普通错误弹出。
+
+## 9. 安全、隐私与日志
+
+- 索引始终只读打开，不创建 writer、不获取写锁、不修复文件。
+- 路径和查询通过进程参数数组传递，不经过 shell。
+- Webview 使用 CSP 和 nonce，用户数据按文本展示。
+- 默认离线运行，不上传索引信息。
+- CSV 导出由用户显式选择目标。
+- 每个请求记录 request ID、命令名、耗时、退出码和错误码。
+- 当前实现不记录结果条数、查询结果或字段值；`showSensitiveValuesInLogs` 尚未接入。
+
+## 10. 构建与验证
+
+构建链路：
+
+```text
+npm run build:cli
+  -> mvn -f cli/pom.xml clean package
+npm run copy:cli
+  -> dist/cli
+npm run compile
+  -> tsc --noEmit + esbuild
+npm run package
+  -> build:cli + copy:cli + compile
+npm run vsix
+  -> package + vsce package
 ```
 
-Extension Host 必须先校验响应结构和 `protocolVersion`，再把 `result` 转换为页面状态。
+当前仓库没有 lint 脚本。默认验证应从以下命令中选择与改动相称的集合：
 
-### 2.5 TypeScript 扩展架构
+```bash
+npm run check-types
+mvn -f cli/pom.xml package
+npm run package
+npm run vsix
+```
 
-- `javaCommandRunner`：优先解析配置的 Java Home，未配置时使用系统 `PATH` 中的 `java`；以参数数组执行单次命令，收集 stdout/stderr，并处理版本校验、超时、取消、退出码和输出大小限制。
-- `luceneVersionResolver`：发现已打包插件、执行 `probe`、识别数据版本并维护当前索引的插件选择。
-- `indexDirectoryService`：合并自动发现和持久化的手动索引目录，维护版本匹配及页面缓存，并处理手动引用删除；不持有 Java reader 或进程。
-- `workspaceSettingsService`：兼容校验并读写工作区 `.vscode/lucene-lens.json`，保存手动索引 URI、默认 Analyzer 和字段级覆盖。
-- `protocol/validation`：校验来自 CLI 和 Webview 的所有消息，包括插件 Analyzer 声明的格式、非空约束和重复项。
-- `views`：展示工作区索引扫描状态和索引导航项，通过索引 ID 驱动单例页面，不直接读取文件或启动进程。
-- `webview`：只负责展示与交互，数据统一通过扩展进程转发。
+默认不新增或修改测试用例。涉及 CLI 协议、资源释放、查询或打包时，应补充相应手工冒烟验证，并确认命令结束后没有常驻 Java 进程。
 
-版本选择流程：
+## 11. 后续扩展条件
 
-1. 扫描 `dist/cli/plugins/lucene-<major>/`，建立可用插件列表。
-2. 对候选索引执行 `probe --plugin <jar> --index <path>`，读取 `detectedLuceneMajor`。
-3. 存在与数据主版本相同的插件时将其作为默认选项；否则选择第一个兼容插件。
-4. 手动切换版本时先对目标插件执行 `probe`，成功后更新当前选择。
-5. 权限或损坏错误立即停止探测；全部插件不兼容时返回版本检测失败。
-6. 索引从扫描结果移除时清除其探测结果和手动选择。
+以下能力尚未实现，不能仅通过复制一个插件模块完成：
 
-### 2.6 查询
+- 动态扫描 `dist/cli/plugins/lucene-<major>`。
+- 多插件探测顺序和失败分类。
+- 数据版本与兼容插件的选择策略。
+- Webview 版本候选列表和手动切换。
+- 多版本下 Analyzer 配置迁移。
 
-首版使用 Lucene Query Parser，并限制以下能力：
-
-- `field:value` 形式按指定字段查询；未指定字段时，使用 `MultiFieldQueryParser` 查询当前索引全部文本索引字段。
-- Extension Host 通过 `version` 读取并缓存当前插件声明的 Analyzer 列表，Webview 不维护静态 Analyzer 清单。
-- 默认 Analyzer 优先采用 `luceneLens.query.analyzer`；若该 ID 不在当前插件声明中，则使用声明列表第一项。Lucene 9 插件当前声明 `StandardAnalyzer`、`KeywordAnalyzer`、`WhitespaceAnalyzer`、`SimpleAnalyzer`、`CJKAnalyzer` 和 `SmartChineseAnalyzer`。
-- 每个可查询字段默认继承默认 Analyzer，用户可按需添加字段级覆盖。Java 插件使用 `PerFieldAnalyzerWrapper`，未覆盖字段继续使用默认 Analyzer。
-- 默认 Analyzer 与字段级覆盖写入工作区 `.vscode/lucene-lens.json`。工作区内索引以相对路径为键，外部索引以文件 URI 为键；文件格式带版本号并在读取时严格校验。
-- CLI 使用必填的 `--analyzer <name>` 传递默认值，并允许重复传入 `--field-analyzer <field> <name>`；core 先确认 Analyzer 已由插件声明，插件再校验字段和完成实例化。
-- 默认及字段级 Analyzer 同时用于页面查询和查询结果导出；任一配置变化后查询 cursor 失效并从第一页重新执行。
-- 不支持通过任意类名加载 Analyzer。
-- 返回内部 doc ID、score 和表格当前展示的 stored fields、doc values。
-- 使用 `searchAfter` 分页，避免一次保留全部命中。
-- query cursor 只需包含恢复下一页所需的排序状态。
-- 设置最大命中遍历量、超时和可取消任务。
-
-### 2.7 性能与资源控制
-
-- 默认页大小 50，CLI 硬上限建议 1000。
-- term、文档和查询响应均使用 cursor，不使用不受控 offset 扫描。
-- Webview 只渲染当前页；大量行可进一步使用虚拟列表。
-- 每次 CLI 命令使用受控堆大小启动，默认建议 `-Xmx512m`。
-- 每条命令只在执行期间持有 reader，并在退出前释放。
-- 扩展可以缓存已返回的概览和页面，但不能持有 Java reader。
-- 对连续快速筛选使用防抖；取消时终止对应的一次性子进程。
-- 二进制 stored field 默认不传完整内容；仅在用户显式请求时读取，且有字节上限。
-- 导出采用流式写入，避免在 Extension Host 中拼接完整结果。
-
-### 2.8 安全
-
-1. 只扫描当前工作区目录；工作区未受信任时不启动 Java CLI。
-2. CLI 只接收规范化后的目录路径，并仅以只读方式打开。
-3. 不调用 `IndexWriter`，不提供删除锁文件或自动修复功能。
-4. Webview 使用 CSP、nonce 和 HTML 转义。
-5. 不通过 shell 拼接 Java 命令；使用进程 API 的参数数组。
-6. 默认离线运行，不上传索引信息。
-7. 日志对路径和字段值采用最小披露原则。
-8. 导出目标必须由用户确认，文件覆盖遵循 VS Code 的确认体验。
-
-### 2.9 Java 运行时与打包
-
-首版不随插件打包 Java Runtime，由用户环境提供 JDK：
-
-1. 配置了 `luceneLens.java.home` 时，使用其 `bin/java`；Windows 使用 `bin/java.exe`。
-2. 未配置时，尝试使用系统 `PATH` 中的 `java`。
-3. 启动 CLI 前执行版本检查；Lucene 9 要求 Java 11 或更高版本。
-4. 解析出的 Java 可用且版本符合要求时直接使用；无法解析或版本不符合要求时，停止操作并提示用户配置有效的 Java Home。
-
-CLI core 和 Lucene 插件 jar 均不包含平台原生依赖，使用同一套产物支持 macOS、Windows 和 Linux。打包与运行还应满足：
-
-- 在三个平台分别验证 Java 路径解析、参数传递、取消、超时和进程退出行为。
-- CLI core 构建为单个可执行 jar；首版只构建一个包含 Lucene 9 运行依赖的插件 jar。
-- 运行时通过扩展安装目录定位 `dist/cli`，不能依赖当前工作目录。
-
-### 2.10 日志与错误处理
-
-- 创建 `Lucene Lens` Output Channel。
-- 每个请求生成 request ID，记录方法、耗时、结果条数和错误码。
-- 默认不记录查询结果、stored field 值和完整 term。
-- 用户提示采用“问题 + 建议动作”格式，例如：
-  - `This directory is not a Lucene index. Choose a directory containing segments_N.`
-  - `The index was created by an unsupported Lucene version. Select a compatible CLI.`
-- 提供 `Show Logs` 操作查看详细堆栈，但 UI 提示不直接暴露内部异常。
-
-### 2.11 实施顺序
-
-#### 2.11.1 工程骨架
-
-- 初始化 VS Code Extension TypeScript 工程
-- 初始化 Java CLI Maven 多模块构建
-- 建立 `cli-core`、插件 SPI、版本化插件和 `probe` 命令
-- 建立子命令、JSON 输出模型和 Output Channel
-- 完成单次命令执行、超时、取消与资源释放
-
-验收：扩展可执行 `version` 和 `probe` 命令、为 core 选择对应版本插件、解析 JSON 和退出码；命令结束后不存在常驻 Java 进程。
-
-#### 2.11.2 只读打开与概览
-
-- 可刷新、可点击的侧边栏索引导航和单例 Webview 页面
-- 工作区 `segments_*` 扫描、候选目录去重和 `probe`
-- 侧边栏索引选择、版本下拉、字段加载和第一页文档
-- 顶部搜索框、表格、页脚分页和页面状态
-
-验收：侧边栏自动发现并列出工作区索引；点击索引可直接打开页面并展示该索引第一页数据，且可搜索和翻页。
-
-#### 2.11.3 字段能力
-
-- 字段能力聚合
-
-验收：能够读取查询和文档展示所需的字段能力，不阻塞 Extension Host。
-
-#### 2.11.4 文档与查询
-
-- stored fields 与 doc values 分页
-- stored fields 与 doc values 详情展示
-- 文档详情
-- 支持默认 Analyzer 与字段级 Analyzer 覆盖的受限 Query Parser
-- `searchAfter` 查询分页、超时和取消
-
-验收：可以查询并查看命中文档；关闭页面或修改查询时可取消旧请求。
-
-#### 2.11.5 导出与发布
-
-- 流式 CSV 导出
-- 配置、图标、README、CHANGELOG 和插件商店信息
-- 多平台打包验证
-- 补充安全、性能和兼容性说明
-
-验收：生成可安装 VSIX，并在目标平台完成基本使用验证。
-
-### 2.12 验证
-
-遵循项目规则，默认不新增或修改测试用例，除非用户明确要求。实现过程中仍需进行与变更相称的验证：
-
-- TypeScript 类型检查和 lint
-- Java 编译与静态检查
-- 使用临时生成的小型索引做手工冒烟验证
-- 使用包含删除文档、二进制字段、doc values、无 stored field 和多 segment 的 Lucene 9 索引验证边界
-- 使用多字段索引验证默认 Analyzer、字段级覆盖、CJK 和 Smart Chinese Analyzer 查询及导出
-- 使用较大索引验证分页、取消、超时和内存限制
-- 在 macOS、Windows、Linux 验证 Java 探测、参数传递、超时终止和进程退出
-
-如后续用户明确要求自动化测试，优先覆盖 CLI 参数解析、JSON 输出、分页边界、资源释放和错误映射。
-
-### 2.13 技术约束
-
-1. 首版只支持 Lucene 9，只打包 `cli-plugin-lucene-9`；版本探测只需验证 Lucene 9 插件。
-2. 首版同时支持 macOS、Windows 和 Linux，不引入平台原生依赖。
-3. JDK 由用户环境提供。优先使用 `luceneLens.java.home`，未配置时使用系统 `PATH` 中的 `java`；解析出的 Java 可用且版本符合要求时直接使用，否则提示用户配置 Java Home。
-4. 查询设置按当前插件声明展示 Analyzer，支持默认 Analyzer 和字段级继承/覆盖；Lucene 9 插件声明六种内置 Analyzer，其中中文查询可选择 `CJKAnalyzer` 或 `SmartChineseAnalyzer`。
-5. 文档列表、详情和查询结果同时展示 stored fields 与 doc values。
-6. 导出格式仅支持 CSV。
+开始多版本工作前，必须先确定上述行为以及协议兼容策略，再更新目录、状态模型和打包流程。每个新增版本插件仍需自行实现 SPI，并声明它支持的 Analyzer 列表。

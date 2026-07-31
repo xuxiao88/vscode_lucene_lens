@@ -1,5 +1,8 @@
 # Lucene Lens 首版执行计划
 
+> 状态：首版已完成。本文件保留为历史实施基线；当前架构和接口以
+> [plugin-design.md](plugin-design.md) 与实际源码为准。
+
 ## 1. 实施基线
 
 - 首版固定使用 Lucene 9.12.3、`lucene-backward-codecs` 和 Java 11，可读取同一主版本的较早默认索引格式。
@@ -16,7 +19,7 @@
 2. 实现 CLI 协议、命令入口、SPI、错误码及一次性插件加载。
 3. 实现 Lucene 9 索引探测、概览、字段、stored fields、doc values、查询分页和 CSV 导出。
 4. 实现 Java Home/PATH 探测、CLI 子进程、工作区扫描、手动目录选择与持久化、协议校验和页面状态编排。
-5. 实现侧边栏索引导航、手动索引删除、单例 Webview、版本选择、文档表格、详情、查询和分页。
+5. 实现侧边栏索引导航、手动索引删除、单例 Webview、固定 Lucene 9 版本标识、文档表格、详情、查询和分页。
 6. 补齐图标、README、CHANGELOG、构建说明和多平台验证说明。
 7. 执行 TypeScript 类型检查、Maven package、VSIX 打包和 CLI 手工冒烟验证。
 
@@ -32,6 +35,7 @@
 - 默认 Analyzer 和实际添加的字段级覆盖保存在工作区 `.vscode/lucene-lens.json`。
 - 手动加入的索引目录以文件 URI 保存在工作区 `.vscode/lucene-lens.json`；删除操作只移除引用，不删除索引文件。
 - CSV 使用 UTF-8、CRLF、表头和标准双引号转义；多值在单元格内以换行分隔。
+- 首版 Extension Host 固定加载 `dist/cli/plugins/lucene-9/lucene-plugin.jar`，不扫描插件目录，也不提供动态版本切换。
 
 ## 4. 完成标准
 
