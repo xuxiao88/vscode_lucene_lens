@@ -211,7 +211,7 @@ stderr 仅记录诊断日志。若进程被强制终止、JVM 无法启动或 st
 | `luceneLens.cli.maxHeap` | `512m` | 单次 Java CLI 命令最大堆 |
 | `luceneLens.pageSize` | `50` | 默认分页大小 |
 | `luceneLens.query.maxHits` | `10000` | 单次查询允许遍历的最大命中数 |
-| `luceneLens.query.analyzer` | `standard` | 搜索使用的内置 Analyzer，可选 `standard`、`keyword` 或 `smartcn` |
+| `luceneLens.query.analyzer` | `standard` | 默认查询 Analyzer，可选 `standard`、`keyword`、`whitespace`、`simple`、`cjk` 或 `smartcn` |
 | `luceneLens.requestTimeout` | `30000` | 普通请求超时，单位毫秒 |
 | `luceneLens.showSensitiveValuesInLogs` | `false` | 是否允许日志记录字段值 |
 
@@ -238,7 +238,9 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Indexes` 视图直接承�
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
-│ [ Lucene 9 (Data) ▼ ]                    [ 搜索框              ] │
+│ [ Lucene 9 (Data) ▼ ] [ 搜索框              ] [查询设置] [导出] │
+├──────────────────────────────────────────────────────────────────────┤
+│ 查询设置（展开时）：默认分词器 [ Standard ▼ ]                       │
 ├──────────────────────────────────────────────────────────────────────┤
 │ doc ID │ score │ field_a │ field_b │ field_c │ ...                 │
 │────────┼───────┼─────────┼─────────┼─────────┼─────────────────────│
@@ -252,6 +254,8 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Indexes` 视图直接承�
 
 - 顶部左侧是 Lucene 版本下拉选项。
 - 顶部右侧是当前索引的搜索框。
+- 查询设置默认收起，展开后可选择当前页面会话使用的默认 Analyzer。
+- Analyzer 切换后，已有查询立即从第一页重新执行；查询结果导出使用相同 Analyzer。
 - 中间区域使用普通表格展示文档数据。
 - 页脚固定展示结果数量、每页条数、当前页和翻页按钮。
 - 页面不重复展示索引目录下拉选项，索引导航统一由侧边栏承担。
@@ -305,6 +309,7 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Indexes` 视图直接承�
 
 - 搜索框只作用于当前由侧边栏选中的索引。
 - 按 Enter 或点击搜索图标后执行查询。
+- 查询设置提供 Standard、Keyword、Whitespace、Simple、CJK 和 Smart Chinese 六种内置 Analyzer；初始值来自 `luceneLens.query.analyzer`。
 - 空搜索内容表示取消查询并恢复普通文档浏览。
 - 查询使用 Lucene Query Parser；语法错误显示在搜索框下方，不清空现有表格。
 - 新搜索总是从第一页开始，并取消上一次尚未完成的查询。
@@ -551,7 +556,8 @@ Extension Host 必须先校验响应结构和 `protocolVersion`，再把 `result
 首版使用 Lucene Query Parser，并限制以下能力：
 
 - `field:value` 形式按指定字段查询；未指定字段时，使用 `MultiFieldQueryParser` 查询当前索引全部文本索引字段。
-- Analyzer 由 `luceneLens.query.analyzer` 配置，只提供 `StandardAnalyzer`、`KeywordAnalyzer` 和 `SmartChineseAnalyzer`。
+- Analyzer 初始值由 `luceneLens.query.analyzer` 配置，页面会话可切换 `StandardAnalyzer`、`KeywordAnalyzer`、`WhitespaceAnalyzer`、`SimpleAnalyzer`、`CJKAnalyzer` 和 `SmartChineseAnalyzer`。
+- 当前 Analyzer 同时用于页面查询和查询结果导出；切换 Analyzer 后查询 cursor 失效并从第一页重新执行。
 - 不支持通过任意类名加载 Analyzer。
 - 返回内部 doc ID、score 和表格当前展示的 stored fields、doc values。
 - 使用 `searchAfter` 分页，避免一次保留全部命中。
@@ -638,7 +644,7 @@ CLI core 和 Lucene 插件 jar 均不包含平台原生依赖，使用同一套�
 - stored fields 与 doc values 分页
 - stored fields 与 doc values 详情展示
 - 文档详情
-- 支持 Standard、Keyword 和 Smart Chinese Analyzer 的受限 Query Parser
+- 支持 Standard、Keyword、Whitespace、Simple、CJK 和 Smart Chinese Analyzer 的受限 Query Parser
 - `searchAfter` 查询分页、超时和取消
 
 验收：可以查询并查看命中文档；关闭页面或修改查询时可取消旧请求。
@@ -660,7 +666,7 @@ CLI core 和 Lucene 插件 jar 均不包含平台原生依赖，使用同一套�
 - Java 编译与静态检查
 - 使用临时生成的小型索引做手工冒烟验证
 - 使用包含删除文档、二进制字段、doc values、无 stored field 和多 segment 的 Lucene 9 索引验证边界
-- 使用中文字段验证 Smart Chinese Analyzer 查询
+- 使用中文字段验证 CJK 和 Smart Chinese Analyzer 查询
 - 使用较大索引验证分页、取消、超时和内存限制
 - 在 macOS、Windows、Linux 验证 Java 探测、参数传递、超时终止和进程退出
 
@@ -671,6 +677,6 @@ CLI core 和 Lucene 插件 jar 均不包含平台原生依赖，使用同一套�
 1. 首版只支持 Lucene 9，只打包 `cli-plugin-lucene-9`；版本探测只需验证 Lucene 9 插件。
 2. 首版同时支持 macOS、Windows 和 Linux，不引入平台原生依赖。
 3. JDK 由用户环境提供。优先使用 `luceneLens.java.home`，未配置时使用系统 `PATH` 中的 `java`；解析出的 Java 可用且版本符合要求时直接使用，否则提示用户配置 Java Home。
-4. 查询支持中文 Analyzer，内置 `SmartChineseAnalyzer`，配置值为 `smartcn`。
+4. 查询设置提供六种内置 Analyzer，其中中文查询可选择 `CJKAnalyzer` 或 `SmartChineseAnalyzer`。
 5. 文档列表、详情和查询结果同时展示 stored fields 与 doc values。
 6. 导出格式仅支持 CSV。

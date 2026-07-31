@@ -23,14 +23,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, tr:focus-visibl
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 1px;
 }
-.app { height: 100vh; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.app { height: 100vh; display: flex; flex-direction: column; }
 .toolbar { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--vscode-panel-border); }
 #versionSelect { width: 120px; }
 .search { display: flex; flex: 1; gap: 6px; justify-content: flex-end; }
 .search input { flex: 1; max-width: 520px; min-width: 120px; padding: 3px 8px; }
+.query-settings { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 9px 10px; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); }
+.query-settings[hidden] { display: none; }
+.query-settings label { display: flex; gap: 7px; align-items: center; color: var(--vscode-foreground); white-space: nowrap; }
 .status { min-height: 28px; padding: 6px 10px; color: var(--vscode-descriptionForeground); }
 .status.error { color: var(--vscode-errorForeground); }
-.table-wrap { overflow: auto; border-top: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); }
+.table-wrap { flex: 1; min-height: 0; overflow: auto; border-top: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); }
 table { border-collapse: separate; border-spacing: 0; min-width: 100%; white-space: nowrap; }
 th, td { max-width: 360px; padding: 7px 10px; text-align: left; overflow: hidden; text-overflow: ellipsis; border-right: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); }
 th { position: sticky; top: 0; z-index: 1; background: var(--vscode-editorGroupHeader-tabsBackground); }

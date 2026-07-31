@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import {CliError, JavaCommandRunner} from "../platform/javaCommandRunner";
 import {parseDocumentPage, parseDocumentRow, parseWebviewMessage} from "../protocol/validation";
 import type {
+  AnalyzerName,
   DocumentRow,
   HostMessage,
   LensPageState,
@@ -72,6 +73,7 @@ export class LensPanel implements vscode.Disposable {
       total: "0",
       totalRelation: "exact",
       query: "",
+      analyzer: this.configuredAnalyzer(),
       hasPrevious: false,
       hasNext: false
     };
@@ -153,13 +155,12 @@ export class LensPanel implements vscode.Disposable {
     });
     if (!target) return;
     const config = vscode.workspace.getConfiguration("luceneLens");
-    const analyzer = this.configuredAnalyzer();
     const maxHits = config.get<number>("query.maxHits", 10000);
     const args = [
       "--index", index.absolutePath,
       "--target", target.fsPath,
       "--query", this.state.query,
-      "--analyzer", analyzer,
+      "--analyzer", this.state.analyzer,
       "--max-hits", String(maxHits)
     ];
     try {
@@ -193,7 +194,10 @@ export class LensPanel implements vscode.Disposable {
           await this.rescan(this.state.selectedIndexId);
           break;
         case "search":
-          await this.search(message.query);
+          await this.search(message.query, message.analyzer);
+          break;
+        case "setAnalyzer":
+          await this.setAnalyzer(message.analyzer);
           break;
         case "pageSize":
           this.cursors = [undefined];
@@ -262,11 +266,19 @@ export class LensPanel implements vscode.Disposable {
     await this.loadPage();
   }
 
-  private async search(query: string): Promise<void> {
+  private async search(query: string, analyzer: AnalyzerName): Promise<void> {
     this.cancelCurrent();
     this.cursors = [undefined];
-    this.update({query: query.trim(), pageNumber: 1});
+    this.update({query: query.trim(), analyzer, pageNumber: 1});
     await this.loadPage();
+  }
+
+  private async setAnalyzer(analyzer: AnalyzerName): Promise<void> {
+    if (this.state.analyzer === analyzer) return;
+    this.cancelCurrent();
+    this.cursors = [undefined];
+    this.update({analyzer, pageNumber: 1});
+    if (this.state.query) await this.loadPage();
   }
 
   private async loadPage(): Promise<void> {
@@ -285,7 +297,7 @@ export class LensPanel implements vscode.Disposable {
           [
             "--index", index.absolutePath,
             "--query", this.state.query,
-            "--analyzer", this.configuredAnalyzer(),
+            "--analyzer", this.state.analyzer,
             "--cursor", cursor,
             "--limit", String(this.state.pageSize),
             "--max-hits", String(config.get<number>("query.maxHits", 10000))
@@ -332,11 +344,18 @@ export class LensPanel implements vscode.Disposable {
     return this.resolvedIndexes.find((item) => item.id === this.state.selectedIndexId);
   }
 
-  private configuredAnalyzer(): "standard" | "keyword" | "smartcn" {
+  private configuredAnalyzer(): AnalyzerName {
     const value = vscode.workspace
       .getConfiguration("luceneLens")
       .get<string>("query.analyzer", "standard");
-    if (value === "standard" || value === "keyword" || value === "smartcn") return value;
+    if (value === "standard"
+        || value === "keyword"
+        || value === "whitespace"
+        || value === "simple"
+        || value === "cjk"
+        || value === "smartcn") {
+      return value;
+    }
     this.output.appendLine(`Unsupported analyzer configuration '${value}', falling back to standard.`);
     return "standard";
   }
@@ -419,9 +438,26 @@ export class LensPanel implements vscode.Disposable {
         <input id="searchInput" type="search" placeholder="Search current index" aria-label="Search query">
         <button type="submit" title="Search">Search</button>
       </form>
+      <button id="querySettingsButton"
+              aria-expanded="false"
+              aria-controls="querySettingsPanel"
+              title="Query settings">Query Settings</button>
       <button id="rescanButton" title="Rescan workspace">Rescan</button>
       <button id="exportButton" title="Export CSV">Export CSV</button>
     </header>
+    <section id="querySettingsPanel" class="query-settings" hidden>
+      <label>Default analyzer
+        <select id="analyzerSelect">
+          <option value="standard">Standard</option>
+          <option value="keyword">Keyword</option>
+          <option value="whitespace">Whitespace</option>
+          <option value="simple">Simple</option>
+          <option value="cjk">CJK</option>
+          <option value="smartcn">Smart Chinese</option>
+        </select>
+      </label>
+      <span>Choose the analyzer used when parsing query text. It must match the index's analysis behavior.</span>
+    </section>
     <section id="status" class="status" aria-live="polite"></section>
     <section class="table-wrap">
       <table>

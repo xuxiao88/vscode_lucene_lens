@@ -2,8 +2,11 @@ package dev.lucenelens.cli.plugin.lucene9.util;
 
 import dev.lucenelens.cli.core.model.PluginException;
 import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.cjk.CJKAnalyzer;
 import org.apache.lucene.analysis.cn.smart.SmartChineseAnalyzer;
 import org.apache.lucene.analysis.core.KeywordAnalyzer;
+import org.apache.lucene.analysis.core.SimpleAnalyzer;
+import org.apache.lucene.analysis.core.WhitespaceAnalyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.BinaryDocValues;
@@ -396,6 +399,9 @@ public final class Lucene9Util {
         switch (name == null ? "standard" : name.toLowerCase(Locale.ROOT)) {
             case "standard": return new StandardAnalyzer();
             case "keyword": return new KeywordAnalyzer();
+            case "whitespace": return new WhitespaceAnalyzer();
+            case "simple": return new SimpleAnalyzer();
+            case "cjk": return new CJKAnalyzer();
             case "smartcn": return new SmartChineseAnalyzer();
             default: throw new PluginException("INVALID_REQUEST", "Unsupported analyzer: " + name);
         }

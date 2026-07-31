@@ -72,7 +72,7 @@ docs/rules/             开发规则
 - Java CLI 不得常驻；每条命令必须使用 `try-with-resources` 在退出前释放 reader、Directory 和文件句柄。
 - 捕获并结构化返回索引不存在、索引损坏、版本不兼容、权限不足等错误。
 - 文档、term、stored field、doc values 等高基数数据必须分页，并设置 CLI 硬上限。
-- 查询仅允许使用内置的 Standard、Keyword 和 Smart Chinese Analyzer，不得按任意类名动态加载。
+- 查询仅允许使用内置的 Standard、Keyword、Whitespace、Simple、CJK 和 Smart Chinese Analyzer，不得按任意类名动态加载。
 - 不反序列化来自索引或客户端的任意 Java 对象。
 
 ## 6. 命令与输出规则

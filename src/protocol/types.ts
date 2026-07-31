@@ -7,6 +7,14 @@ export type PageStatus =
   | "error"
   | "cancelled";
 
+export type AnalyzerName =
+  | "standard"
+  | "keyword"
+  | "whitespace"
+  | "simple"
+  | "cjk"
+  | "smartcn";
+
 export type StoredValue =
   | {type: "string"; value: string}
   | {type: "int" | "long" | "float" | "double"; value: string}
@@ -82,6 +90,7 @@ export interface LensPageState {
   total: string;
   totalRelation: "exact" | "lowerBound";
   query: string;
+  analyzer: AnalyzerName;
   hasPrevious: boolean;
   hasNext: boolean;
   error?: string;
@@ -90,7 +99,8 @@ export interface LensPageState {
 export type WebviewMessage =
   | {type: "ready"}
   | {type: "rescan"}
-  | {type: "search"; query: string}
+  | {type: "search"; query: string; analyzer: AnalyzerName}
+  | {type: "setAnalyzer"; analyzer: AnalyzerName}
   | {type: "pageSize"; pageSize: 25 | 50 | 100 | 200}
   | {type: "previousPage"}
   | {type: "nextPage"}

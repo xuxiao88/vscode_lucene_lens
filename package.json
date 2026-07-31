@@ -89,9 +89,17 @@
         },
         "luceneLens.query.analyzer": {
           "type": "string",
-          "enum": ["standard", "keyword", "smartcn"],
+          "enum": ["standard", "keyword", "whitespace", "simple", "cjk", "smartcn"],
           "default": "standard",
-          "description": "Analyzer used by Lucene Query Parser."
+          "enumDescriptions": [
+            "General-purpose Unicode text analysis.",
+            "Treat the complete input as one token.",
+            "Split text only at whitespace.",
+            "Split on non-letters and lowercase tokens.",
+            "Analyze Chinese, Japanese, and Korean text.",
+            "Analyze Chinese text with Smart Chinese."
+          ],
+          "description": "Default analyzer used by Lucene Query Parser. It can also be changed in Query Settings."
         },
         "luceneLens.requestTimeout": {
           "type": "number",

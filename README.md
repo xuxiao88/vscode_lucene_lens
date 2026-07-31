@@ -31,7 +31,7 @@ Lucene Lens 优先使用 `luceneLens.java.home`。未配置时使用 `PATH` 中�
 | `luceneLens.cli.maxHeap` | `512m` | 每个 CLI 进程的最大堆 |
 | `luceneLens.pageSize` | `50` | 默认分页大小 |
 | `luceneLens.query.maxHits` | `10000` | 查询命中跟踪与导出上限 |
-| `luceneLens.query.analyzer` | `standard` | `standard`、`keyword` 或 `smartcn` |
+| `luceneLens.query.analyzer` | `standard` | 默认查询分词器；可在页面的 **Query Settings** 中切换 |
 | `luceneLens.requestTimeout` | `30000` | 请求超时，单位毫秒 |
 
 ## 构建

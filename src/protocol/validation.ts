@@ -1,5 +1,6 @@
 import type {
   CliResponse,
+  AnalyzerName,
   DocumentRow,
   PageResult,
   ProbeResult,
@@ -32,7 +33,13 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | undefined 
     case "export":
       return {type: value.type};
     case "search":
-      return typeof value.query === "string" ? {type: value.type, query: value.query} : undefined;
+      return typeof value.query === "string" && isAnalyzerName(value.analyzer)
+        ? {type: value.type, query: value.query, analyzer: value.analyzer}
+        : undefined;
+    case "setAnalyzer":
+      return isAnalyzerName(value.analyzer)
+        ? {type: value.type, analyzer: value.analyzer}
+        : undefined;
     case "pageSize":
       return [25, 50, 100, 200].includes(Number(value.pageSize))
         ? {type: value.type, pageSize: Number(value.pageSize) as 25 | 50 | 100 | 200}
@@ -42,6 +49,15 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | undefined 
     default:
       return undefined;
   }
+}
+
+function isAnalyzerName(value: unknown): value is AnalyzerName {
+  return value === "standard"
+    || value === "keyword"
+    || value === "whitespace"
+    || value === "simple"
+    || value === "cjk"
+    || value === "smartcn";
 }
 
 export function parseProbeResult(value: unknown): ProbeResult {

@@ -34,6 +34,6 @@
 - 同一 VSIX 可在 macOS、Windows、Linux 安装。
 - Java 优先使用配置的 Java Home，未配置时使用 `PATH`；Java 不可用或低于 11 时给出明确提示。
 - 能自动发现工作区中的 Lucene 9 索引并浏览 stored fields 与全部 DocValues 类型。
-- 能使用 Standard、Keyword、Smart Chinese Analyzer 查询并分页。
+- 能使用 Standard、Keyword、Whitespace、Simple、CJK、Smart Chinese Analyzer 查询并分页。
 - 能流式导出普通文档和查询结果为 CSV。
 - 命令成功、失败、超时或取消后均无常驻 Java 进程和未释放索引句柄。

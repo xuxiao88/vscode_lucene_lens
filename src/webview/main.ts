@@ -9,6 +9,9 @@ declare function acquireVsCodeApi<T = unknown>(): {
 const vscode = acquireVsCodeApi<LensPageState>();
 const elements = {
   version: byId<HTMLSelectElement>("versionSelect"),
+  analyzer: byId<HTMLSelectElement>("analyzerSelect"),
+  querySettings: byId<HTMLButtonElement>("querySettingsButton"),
+  querySettingsPanel: byId<HTMLElement>("querySettingsPanel"),
   searchForm: byId<HTMLFormElement>("searchForm"),
   search: byId<HTMLInputElement>("searchInput"),
   rescan: byId<HTMLButtonElement>("rescanButton"),
@@ -45,8 +48,20 @@ window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
 
 elements.searchForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  vscode.postMessage({type: "search", query: elements.search.value});
+  vscode.postMessage({
+    type: "search",
+    query: elements.search.value,
+    analyzer: elements.analyzer.value
+  });
 });
+elements.querySettings.addEventListener("click", () => {
+  const expanded = elements.querySettings.getAttribute("aria-expanded") === "true";
+  elements.querySettings.setAttribute("aria-expanded", String(!expanded));
+  elements.querySettingsPanel.hidden = expanded;
+});
+elements.analyzer.addEventListener("change", () =>
+  vscode.postMessage({type: "setAnalyzer", analyzer: elements.analyzer.value})
+);
 elements.rescan.addEventListener("click", () => vscode.postMessage({type: "rescan"}));
 elements.export.addEventListener("click", () => vscode.postMessage({type: "export"}));
 elements.pageSize.addEventListener("change", () =>
@@ -60,6 +75,7 @@ vscode.postMessage({type: "ready"});
 
 function render(next: LensPageState): void {
   elements.search.value = next.query;
+  elements.analyzer.value = next.analyzer;
   elements.pageSize.value = String(next.pageSize);
   elements.pageNumber.textContent = `Page ${next.pageNumber}`;
   elements.total.textContent =
