@@ -12,7 +12,8 @@
   "activationEvents": [
     "onView:luceneLens.indexes",
     "onCommand:luceneLens.open",
-    "onCommand:luceneLens.openIndex"
+    "onCommand:luceneLens.openIndex",
+    "onCommand:luceneLens.chooseIndexDirectory"
   ],
   "extensionKind": ["workspace"],
   "main": "./dist/extension/extension.js",
@@ -20,8 +21,14 @@
     "commands": [
       {"command": "luceneLens.open", "title": "Open Lucene Lens", "category": "Lucene Lens"},
       {
+        "command": "luceneLens.chooseIndexDirectory",
+        "title": "Select Lucene Index Directory",
+        "category": "Lucene Lens",
+        "icon": "$(folder-opened)"
+      },
+      {
         "command": "luceneLens.refreshIndexes",
-        "title": "Refresh Workspace Indexes",
+        "title": "Refresh Lucene Indexes",
         "category": "Lucene Lens",
         "icon": "$(refresh)"
       },
@@ -36,15 +43,20 @@
     },
     "views": {
       "luceneLens": [
-        {"id": "luceneLens.indexes", "name": "Workspace Indexes"}
+        {"id": "luceneLens.indexes", "name": "Indexes"}
       ]
     },
     "menus": {
       "view/title": [
         {
+          "command": "luceneLens.chooseIndexDirectory",
+          "when": "view == luceneLens.indexes",
+          "group": "navigation@1"
+        },
+        {
           "command": "luceneLens.refreshIndexes",
           "when": "view == luceneLens.indexes",
-          "group": "navigation"
+          "group": "navigation@2"
         }
       ]
     },

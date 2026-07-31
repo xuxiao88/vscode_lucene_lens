@@ -90,12 +90,13 @@ vscode_lucene_lens/
 | --- | --- | --- |
 | `luceneLens.open` | Open Lucene Lens | 在编辑区打开或聚焦 Lucene Lens 页面 |
 | `luceneLens.openIndex` | Open Lucene Index | 由侧边栏索引项调用，打开页面并选中指定索引；不显示在命令面板 |
-| `luceneLens.refreshIndexes` | Refresh Workspace Indexes | 刷新侧边栏中的工作区索引列表 |
-| `luceneLens.rescanWorkspace` | Rescan Workspace Indexes | 重新扫描当前工作区中的 Lucene 索引目录并更新页面下拉选项 |
+| `luceneLens.chooseIndexDirectory` | Select Lucene Index Directory | 手动选择、验证并打开工作区内外的 Lucene 索引目录 |
+| `luceneLens.refreshIndexes` | Refresh Lucene Indexes | 刷新并重新校验侧边栏中的自动发现和手动加入索引 |
+| `luceneLens.rescanWorkspace` | Rescan Workspace Indexes | 重新扫描当前工作区中的 Lucene 索引目录并更新侧边栏及当前页面 |
 | `luceneLens.export` | Export Results | 将当前文档或查询结果导出为 CSV |
 | `luceneLens.showLogs` | Show Lucene Lens Logs | 查看命令耗时、结果数量、错误码和诊断日志 |
 
-页面内的索引选择、搜索、查看文档和分页不单独注册 VS Code 命令；侧边栏索引项通过内部命令把索引 ID 传给单例页面。耗时操作通过 VS Code 进度通知取消；目录、权限、索引损坏、版本不兼容和查询语法错误直接显示在页面中。
+页面不再提供索引选择控件；侧边栏索引项通过内部命令把索引 ID 传给单例页面。页面内的搜索、查看文档和分页不单独注册 VS Code 命令。耗时操作通过 VS Code 进度通知取消；目录、权限、索引损坏、版本不兼容和查询语法错误直接显示在页面中。
 
 #### 2.2.2 CLI 命令协议
 
@@ -218,14 +219,16 @@ stderr 仅记录诊断日志。若进程被强制终止、JVM 无法启动或 st
 
 #### 2.3.1 侧边栏索引导航
 
-Activity Bar 增加 `Lucene Lens` 图标，对应的 `Workspace Indexes` 视图直接承担索引发现和导航：
+Activity Bar 增加 `Lucene Lens` 图标，对应的 `Indexes` 视图直接承担索引发现和导航：
 
 1. 视图首次展开时立即扫描当前工作区，并显示扫描中状态。
 2. 扫描成功后逐项展示索引名称、Lucene 版本和路径 tooltip；不再显示中转性质的打开按钮。
 3. 点击索引项执行内部命令 `luceneLens.openIndex`。如果页面尚未打开，在编辑区创建单例 Webview 页面并选中该索引；如果页面已经打开，则聚焦页面并切换索引。
-4. 视图标题栏提供刷新按钮，执行 `luceneLens.refreshIndexes`；页面内重新扫描得到的结果也同步到侧边栏。
-5. 未发现索引、工作区未受信任或扫描失败时，在列表中显示对应状态。
-6. 侧边栏和页面共享扩展进程缓存的扫描结果，点击索引时不重复执行 `probe`。
+4. 视图标题栏提供目录选择按钮，执行 `luceneLens.chooseIndexDirectory`。用户可以选择工作区内外的具体索引目录；扩展执行只读 `probe`，验证成功后把目录加入列表并立即打开。
+5. 手动加入的目录在当前扩展会话中保留，后续刷新仍参与校验和列表合并；自动扫描和手动选择得到的相同目录只展示一次。
+6. 视图标题栏提供刷新按钮，执行 `luceneLens.refreshIndexes`；页面内重新扫描得到的结果也同步到侧边栏。
+7. 未发现索引、工作区未受信任或扫描失败时，在列表中显示对应状态。
+8. 侧边栏和页面共享扩展进程缓存的扫描结果，点击索引时不重复执行 `probe`。
 
 #### 2.3.2 页面布局
 
@@ -233,7 +236,7 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Workspace Indexes` 视图�
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
-│ [ 索引目录 ▼ ] [ Lucene 9 (Data) ▼ ]              [ 搜索框      ] │
+│ [ Lucene 9 (Data) ▼ ]                    [ 搜索框              ] │
 ├──────────────────────────────────────────────────────────────────────┤
 │ doc ID │ score │ field_a │ field_b │ field_c │ ...                 │
 │────────┼───────┼─────────┼─────────┼─────────┼─────────────────────│
@@ -245,12 +248,12 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Workspace Indexes` 视图�
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-- 顶部左侧是索引目录下拉选项。
-- 索引目录下拉右侧是 Lucene 版本下拉选项。
+- 顶部左侧是 Lucene 版本下拉选项。
 - 顶部右侧是当前索引的搜索框。
 - 中间区域使用普通表格展示文档数据。
 - 页脚固定展示结果数量、每页条数、当前页和翻页按钮。
-- 页面尺寸变化时，搜索框优先伸缩；索引下拉保持可识别当前目录的最小宽度。
+- 页面不重复展示索引目录下拉选项，索引导航统一由侧边栏承担。
+- 页面尺寸变化时，搜索框优先伸缩。
 
 #### 2.3.3 工作区扫描
 
@@ -262,18 +265,19 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Workspace Indexes` 视图�
 4. 将 `segments_*` 的父目录去重，得到候选 Lucene 索引目录。
 5. 对每个候选目录执行 `probe`，验证索引并读取索引数据的 Lucene 主版本。
 6. 将数据版本与 `dist/cli/plugins/` 中已有插件匹配，生成该索引可选择的版本列表。
-7. 验证成功的目录加入顶部下拉选项；无效目录不展示，错误写入 Output Channel。
+7. 验证成功的目录加入侧边栏索引列表；无效目录不展示，错误写入 Output Channel。
 8. 多根工作区使用“工作区名称 / 相对路径”作为显示文本，绝对路径作为内部唯一标识。
 
-扫描期间索引下拉框显示 `Scanning workspace...`，版本下拉和搜索框均禁用。扫描完成后：
+扫描期间侧边栏显示 `Scanning workspace indexes...`，页面中的版本下拉和搜索框均禁用。扫描完成后：
 
-- 有索引时默认选择第一个，并加载第一页文档。
+- 仅由侧边栏触发扫描时只更新索引列表，不自动占用编辑区。
+- 页面已打开或通过 `luceneLens.open` 打开时，保留当前有效选择；没有当前选择时默认加载第一个索引的第一页文档。
 - 没有索引时表格区域显示 `No Lucene indexes found in the current workspace.`。
 - 用户执行 `luceneLens.rescanWorkspace` 时清空旧扫描结果并重新执行上述流程。
 
 #### 2.3.4 索引选择
 
-用户切换顶部下拉选项时：
+用户点击侧边栏索引项或成功手动选择索引目录时：
 
 1. 取消当前索引尚未完成的搜索或分页进程。
 2. 清空搜索框、表格和分页状态。
@@ -282,7 +286,7 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Workspace Indexes` 视图�
 5. 根据 stored fields 和 doc values 生成表格列。
 6. 二进制字段仅展示 `[binary: N bytes]`，不直接展开完整内容。
 
-每个下拉选项保留绝对路径作为 tooltip，避免同名目录无法区分。
+每个侧边栏索引项保留绝对路径作为 tooltip，避免同名目录无法区分。
 
 #### 2.3.5 Lucene 版本选择
 
@@ -297,7 +301,7 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Workspace Indexes` 视图�
 
 #### 2.3.6 搜索
 
-- 搜索框只作用于当前下拉选中的索引。
+- 搜索框只作用于当前由侧边栏选中的索引。
 - 按 Enter 或点击搜索图标后执行查询。
 - 空搜索内容表示取消查询并恢复普通文档浏览。
 - 查询使用 Lucene Query Parser；语法错误显示在搜索框下方，不清空现有表格。
@@ -359,17 +363,9 @@ interface LucenePluginRef {
 }
 ```
 
-发送给 Webview 下拉框时转换为精简结构，避免暴露插件路径：
+发送给 Webview 的版本列表使用精简结构，避免暴露插件路径。索引列表只由 Extension Host 中的侧边栏维护，Webview 只接收当前索引 ID：
 
 ```ts
-interface IndexOption {
-  id: string;
-  label: string;
-  description: string;
-  tooltip: string;
-  detectedLuceneMajor: number;
-}
-
 interface VersionOption {
   major: number;
   label: string;
@@ -480,7 +476,6 @@ type PageStatus =
 
 interface LensPageState {
   status: PageStatus;
-  indexes: IndexOption[];
   selectedIndexId?: string;
   versions: VersionOption[];
   selectedLuceneMajor?: number;
@@ -625,7 +620,7 @@ CLI core 和 Lucene 插件 jar 均不包含平台原生依赖，使用同一套�
 
 - 可刷新、可点击的侧边栏索引导航和单例 Webview 页面
 - 工作区 `segments_*` 扫描、候选目录去重和 `probe`
-- 索引下拉、版本下拉、字段加载和第一页文档
+- 侧边栏索引选择、版本下拉、字段加载和第一页文档
 - 顶部搜索框、表格、页脚分页和页面状态
 
 验收：侧边栏自动发现并列出工作区索引；点击索引可直接打开页面并展示该索引第一页数据，且可搜索和翻页。

@@ -5,7 +5,6 @@ import {parseDocumentPage, parseDocumentRow, parseWebviewMessage} from "../proto
 import type {
   DocumentRow,
   HostMessage,
-  IndexOption,
   LensPageState,
   PageResult,
   ResolvedIndex,
@@ -67,7 +66,6 @@ export class LensPanel implements vscode.Disposable {
       .get<number>("pageSize", 50);
     this.state = {
       status: "loading",
-      indexes: [],
       rows: [],
       pageNumber: 1,
       pageSize: normalizePageSize(configuredPageSize),
@@ -112,7 +110,6 @@ export class LensPanel implements vscode.Disposable {
       this.cursors = [undefined];
       this.update({
         status: "untrusted",
-        indexes: [],
         selectedIndexId: undefined,
         rows: [],
         error: "Trust this workspace before Lucene Lens scans or opens indexes."
@@ -123,7 +120,6 @@ export class LensPanel implements vscode.Disposable {
     this.update({
       status: "scanning",
       error: undefined,
-      indexes: [],
       selectedIndexId: undefined,
       selectedLuceneMajor: undefined,
       rows: [],
@@ -196,9 +192,6 @@ export class LensPanel implements vscode.Disposable {
         case "rescan":
           await this.rescan(this.state.selectedIndexId);
           break;
-        case "selectIndex":
-          await this.selectIndex(message.indexId);
-          break;
         case "search":
           await this.search(message.query);
           break;
@@ -231,34 +224,17 @@ export class LensPanel implements vscode.Disposable {
     }
   }
 
-  private async selectIndex(indexId: string): Promise<void> {
-    if (!this.resolvedIndexes.some((item) => item.id === indexId)) return;
-    this.cancelCurrent();
-    this.preferredIndexId = indexId;
-    this.cursors = [undefined];
-    this.update({
-      selectedIndexId: indexId,
-      selectedLuceneMajor: 9,
-      query: "",
-      pageNumber: 1,
-      rows: []
-    });
-    await this.loadPage();
-  }
-
   private async applyIndexes(
     indexes: ResolvedIndex[],
     preferredIndexId?: string
   ): Promise<void> {
     this.cancelCurrent();
     this.resolvedIndexes = indexes;
-    const options = indexes.map(toIndexOption);
-    if (options.length === 0) {
+    if (indexes.length === 0) {
       this.preferredIndexId = undefined;
       this.cursors = [undefined];
       this.update({
         status: "empty",
-        indexes: [],
         selectedIndexId: undefined,
         selectedLuceneMajor: undefined,
         rows: [],
@@ -268,13 +244,12 @@ export class LensPanel implements vscode.Disposable {
       });
       return;
     }
-    const selectedIndexId = options.some((option) => option.id === preferredIndexId)
+    const selectedIndexId = indexes.some((index) => index.id === preferredIndexId)
       ? preferredIndexId
-      : options[0]?.id;
+      : indexes[0]?.id;
     this.preferredIndexId = selectedIndexId;
     this.cursors = [undefined];
     this.update({
-      indexes: options,
       selectedIndexId,
       selectedLuceneMajor: 9,
       query: "",
@@ -439,7 +414,6 @@ export class LensPanel implements vscode.Disposable {
 <body>
   <main class="app">
     <header class="toolbar">
-      <select id="indexSelect" aria-label="Lucene index"></select>
       <select id="versionSelect" aria-label="Lucene version"><option>Lucene 9</option></select>
       <form id="searchForm" class="search">
         <input id="searchInput" type="search" placeholder="Search current index" aria-label="Search query">
@@ -477,16 +451,6 @@ export class LensPanel implements vscode.Disposable {
 </body>
 </html>`;
   }
-}
-
-function toIndexOption(index: ResolvedIndex): IndexOption {
-  return {
-    id: index.id,
-    label: index.displayName,
-    description: index.description,
-    tooltip: index.absolutePath,
-    detectedLuceneMajor: index.detectedLuceneMajor
-  };
 }
 
 function normalizePageSize(value: number): 25 | 50 | 100 | 200 {

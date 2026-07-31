@@ -8,7 +8,6 @@ declare function acquireVsCodeApi<T = unknown>(): {
 
 const vscode = acquireVsCodeApi<LensPageState>();
 const elements = {
-  index: byId<HTMLSelectElement>("indexSelect"),
   version: byId<HTMLSelectElement>("versionSelect"),
   searchForm: byId<HTMLFormElement>("searchForm"),
   search: byId<HTMLInputElement>("searchInput"),
@@ -44,9 +43,6 @@ window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
   }
 });
 
-elements.index.addEventListener("change", () =>
-  vscode.postMessage({type: "selectIndex", indexId: elements.index.value})
-);
 elements.searchForm.addEventListener("submit", (event) => {
   event.preventDefault();
   vscode.postMessage({type: "search", query: elements.search.value});
@@ -63,7 +59,6 @@ elements.closeDetail.addEventListener("click", () => elements.dialog.close());
 vscode.postMessage({type: "ready"});
 
 function render(next: LensPageState): void {
-  renderIndexes(next);
   elements.search.value = next.query;
   elements.pageSize.value = String(next.pageSize);
   elements.pageNumber.textContent = `Page ${next.pageNumber}`;
@@ -77,24 +72,6 @@ function render(next: LensPageState): void {
   elements.status.textContent = statusText(next);
   elements.status.classList.toggle("error", next.status === "error");
   renderTable(next.rows);
-}
-
-function renderIndexes(next: LensPageState): void {
-  const existing = new Map(Array.from(elements.index.options).map((option) => [option.value, option]));
-  for (const option of next.indexes) {
-    let element = existing.get(option.id);
-    if (!element) {
-      element = document.createElement("option");
-      element.value = option.id;
-      elements.index.append(element);
-    }
-    element.textContent = option.label;
-    element.title = option.tooltip;
-    existing.delete(option.id);
-  }
-  for (const stale of existing.values()) stale.remove();
-  elements.index.disabled = next.status === "scanning" || next.indexes.length === 0;
-  if (next.selectedIndexId) elements.index.value = next.selectedIndexId;
 }
 
 function renderTable(rows: DocumentRow[]): void {
@@ -182,8 +159,8 @@ function showDocument(documentRow: DocumentRow): void {
 function statusText(next: LensPageState): string {
   switch (next.status) {
     case "untrusted": return next.error ?? "Workspace is not trusted.";
-    case "scanning": return "Scanning workspace for Lucene indexes…";
-    case "empty": return "No Lucene 9 indexes found in the current workspace.";
+    case "scanning": return "Scanning for Lucene indexes…";
+    case "empty": return "No Lucene 9 indexes found. Use the sidebar folder button to select one.";
     case "loading": return "Loading documents…";
     case "error": return next.error ?? "Unable to load the index.";
     case "cancelled": return "Operation cancelled.";

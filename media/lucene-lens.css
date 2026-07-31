@@ -25,7 +25,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, tr:focus-visibl
 }
 .app { height: 100vh; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; }
 .toolbar { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--vscode-panel-border); }
-#indexSelect { width: min(36vw, 420px); min-width: 180px; }
 #versionSelect { width: 120px; }
 .search { display: flex; flex: 1; gap: 6px; justify-content: flex-end; }
 .search input { flex: 1; max-width: 520px; min-width: 120px; padding: 3px 8px; }
@@ -50,6 +49,5 @@ dialog pre { margin: 0; padding: 14px; overflow: auto; max-height: calc(80vh - 5
 
 @media (max-width: 760px) {
   .toolbar { flex-wrap: wrap; }
-  #indexSelect { width: calc(100% - 130px); }
   .search { order: 2; width: 100%; }
 }

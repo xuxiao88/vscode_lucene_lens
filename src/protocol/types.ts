@@ -72,17 +72,8 @@ export interface ResolvedIndex {
   detectedLuceneMajor: number;
 }
 
-export interface IndexOption {
-  id: string;
-  label: string;
-  description: string;
-  tooltip: string;
-  detectedLuceneMajor: number;
-}
-
 export interface LensPageState {
   status: PageStatus;
-  indexes: IndexOption[];
   selectedIndexId?: string;
   selectedLuceneMajor?: number;
   rows: DocumentRow[];
@@ -99,7 +90,6 @@ export interface LensPageState {
 export type WebviewMessage =
   | {type: "ready"}
   | {type: "rescan"}
-  | {type: "selectIndex"; indexId: string}
   | {type: "search"; query: string}
   | {type: "pageSize"; pageSize: 25 | 50 | 100 | 200}
   | {type: "previousPage"}

@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import {dirname} from "node:path";
+import {dirname, resolve} from "node:path";
 import * as vscode from "vscode";
 import type {ResolvedIndex} from "../protocol/types";
 import {CliError, JavaCommandRunner} from "../platform/javaCommandRunner";
@@ -10,6 +10,7 @@ const EXCLUDED_DIRECTORY = /(^|[\\/])(\.git|node_modules|dist|target|\.idea|\.vs
 export class IndexDirectoryService implements vscode.Disposable {
   private readonly didScanEmitter = new vscode.EventEmitter<readonly ResolvedIndex[]>();
   private resolvedIndexes: ResolvedIndex[] = [];
+  private readonly manualIndexes = new Map<string, ResolvedIndex>();
 
   readonly onDidScan = this.didScanEmitter.event;
 
@@ -22,33 +23,33 @@ export class IndexDirectoryService implements vscode.Disposable {
     return [...this.resolvedIndexes];
   }
 
+  async addManual(absolutePath: string, token?: vscode.CancellationToken): Promise<ResolvedIndex> {
+    const normalizedPath = resolve(absolutePath);
+    const index = await this.probe(normalizedPath, token);
+    if (!index) {
+      throw new Error("The selected directory is not a compatible Lucene 9 index.");
+    }
+    this.manualIndexes.set(normalizedPath, index);
+    this.resolvedIndexes = mergeIndexes([...this.resolvedIndexes, index]);
+    this.didScanEmitter.fire(this.getCached());
+    return index;
+  }
+
   async scan(token?: vscode.CancellationToken): Promise<ResolvedIndex[]> {
     const segmentFiles = (await vscode.workspace.findFiles("**/segments_*"))
       .filter((uri) => !EXCLUDED_DIRECTORY.test(uri.fsPath));
-    const candidates = [...new Set(segmentFiles.map((uri) => dirname(uri.fsPath)))].sort();
+    const candidates = [
+      ...new Set([
+        ...segmentFiles.map((uri) => dirname(uri.fsPath)),
+        ...this.manualIndexes.keys()
+      ])
+    ].sort();
     const results: ResolvedIndex[] = [];
     for (const absolutePath of candidates) {
       if (token?.isCancellationRequested) break;
       try {
-        const probe = parseProbeResult(await this.runner.run<unknown>(
-          "probe",
-          ["--index", absolutePath],
-          token
-        ));
-        if (!probe.compatible || probe.detectedLuceneMajor !== 9) {
-          this.output.appendLine(`Skipped incompatible index: ${absolutePath}`);
-          continue;
-        }
-        const uri = vscode.Uri.file(absolutePath);
-        const folder = vscode.workspace.getWorkspaceFolder(uri);
-        const relative = folder ? vscode.workspace.asRelativePath(uri, false) : absolutePath;
-        results.push({
-          id: createHash("sha256").update(absolutePath).digest("hex").slice(0, 16),
-          absolutePath,
-          displayName: folder ? `${folder.name} / ${relative}` : relative,
-          description: probe.createdVersion ?? "Lucene 9",
-          detectedLuceneMajor: probe.detectedLuceneMajor
-        });
+        const index = await this.probe(absolutePath, token);
+        if (index) results.push(index);
       } catch (error) {
         if (error instanceof CliError
             && (error.code.startsWith("JAVA_")
@@ -62,13 +63,43 @@ export class IndexDirectoryService implements vscode.Disposable {
       }
     }
     if (!token?.isCancellationRequested) {
-      this.resolvedIndexes = results;
+      this.resolvedIndexes = mergeIndexes([...this.manualIndexes.values(), ...results]);
       this.didScanEmitter.fire(this.getCached());
     }
-    return results;
+    return this.getCached();
   }
 
   dispose(): void {
     this.didScanEmitter.dispose();
   }
+
+  private async probe(
+    absolutePath: string,
+    token?: vscode.CancellationToken
+  ): Promise<ResolvedIndex | undefined> {
+    const probe = parseProbeResult(await this.runner.run<unknown>(
+      "probe",
+      ["--index", absolutePath],
+      token
+    ));
+    if (!probe.compatible || probe.detectedLuceneMajor !== 9) {
+      this.output.appendLine(`Skipped incompatible index: ${absolutePath}`);
+      return undefined;
+    }
+    const uri = vscode.Uri.file(absolutePath);
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    const relative = folder ? vscode.workspace.asRelativePath(uri, false) : absolutePath;
+    return {
+      id: createHash("sha256").update(absolutePath).digest("hex").slice(0, 16),
+      absolutePath,
+      displayName: folder ? `${folder.name} / ${relative}` : relative,
+      description: probe.createdVersion ?? "Lucene 9",
+      detectedLuceneMajor: probe.detectedLuceneMajor
+    };
+  }
+}
+
+function mergeIndexes(indexes: ResolvedIndex[]): ResolvedIndex[] {
+  return [...new Map(indexes.map((index) => [index.absolutePath, index])).values()]
+    .sort((left, right) => left.displayName.localeCompare(right.displayName));
 }

@@ -31,8 +31,6 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | undefined 
     case "nextPage":
     case "export":
       return {type: value.type};
-    case "selectIndex":
-      return typeof value.indexId === "string" ? {type: value.type, indexId: value.indexId} : undefined;
     case "search":
       return typeof value.query === "string" ? {type: value.type, query: value.query} : undefined;
     case "pageSize":

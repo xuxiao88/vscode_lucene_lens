@@ -15,8 +15,8 @@
 1. 建立 TypeScript、Maven、esbuild 和 VSIX 打包骨架。
 2. 实现 CLI 协议、命令入口、SPI、错误码及一次性插件加载。
 3. 实现 Lucene 9 索引探测、概览、字段、stored fields、doc values、查询分页和 CSV 导出。
-4. 实现 Java Home/PATH 探测、CLI 子进程、工作区扫描、协议校验和页面状态编排。
-5. 实现侧边栏索引导航、单例 Webview、索引与版本选择、文档表格、详情、查询和分页。
+4. 实现 Java Home/PATH 探测、CLI 子进程、工作区扫描、手动目录选择、协议校验和页面状态编排。
+5. 实现侧边栏索引导航、单例 Webview、版本选择、文档表格、详情、查询和分页。
 6. 补齐图标、README、CHANGELOG、构建说明和多平台验证说明。
 7. 执行 TypeScript 类型检查、Maven package、VSIX 打包和 CLI 手工冒烟验证。
 

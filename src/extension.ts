@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import {JavaCommandRunner} from "./platform/javaCommandRunner";
+import {CliError, JavaCommandRunner} from "./platform/javaCommandRunner";
 import {IndexDirectoryService} from "./services/indexDirectoryService";
 import {IndexTree} from "./views/indexTree";
 import {LensPanel} from "./webview/lensPanel";
@@ -21,6 +21,40 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("luceneLens.openIndex", async (indexId: string) => {
       if (!indexTree.getIndex(indexId)) return;
       await open().openIndex(indexId);
+    }),
+    vscode.commands.registerCommand("luceneLens.chooseIndexDirectory", async () => {
+      if (!vscode.workspace.isTrusted) {
+        await vscode.window.showWarningMessage(
+          "Trust this workspace before opening a Lucene index."
+        );
+        return;
+      }
+      const selected = await vscode.window.showOpenDialog({
+        title: "Select a Lucene index directory",
+        defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri,
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: "Open Index"
+      });
+      const directory = selected?.[0];
+      if (!directory) return;
+      try {
+        const index = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: "Validating Lucene index",
+            cancellable: true
+          },
+          (_progress, token) => indexes.addManual(directory.fsPath, token)
+        );
+        await open().openIndex(index.id);
+      } catch (error) {
+        if (error instanceof CliError && error.code === "REQUEST_CANCELLED") return;
+        const message = error instanceof Error ? error.message : String(error);
+        output.appendLine(`Manual index selection failed for ${directory.fsPath}: ${message}`);
+        await vscode.window.showErrorMessage(`Unable to open Lucene index: ${message}`);
+      }
     }),
     vscode.commands.registerCommand("luceneLens.refreshIndexes", () => indexTree.refresh()),
     vscode.commands.registerCommand("luceneLens.rescanWorkspace", async () => open().rescan()),
