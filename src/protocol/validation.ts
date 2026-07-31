@@ -1,9 +1,11 @@
 import type {
+  AnalyzerDefinition,
   CliResponse,
   AnalyzerName,
   DocumentRow,
   FieldSummary,
   PageResult,
+  PluginVersionResult,
   ProbeResult,
   WebviewMessage
 } from "./types";
@@ -61,12 +63,43 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | undefined 
 }
 
 export function isAnalyzerName(value: unknown): value is AnalyzerName {
-  return value === "standard"
-    || value === "keyword"
-    || value === "whitespace"
-    || value === "simple"
-    || value === "cjk"
-    || value === "smartcn";
+  return typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value);
+}
+
+export function parsePluginVersionResult(value: unknown): PluginVersionResult {
+  if (!isRecord(value)
+      || typeof value.cliVersion !== "string"
+      || !Number.isInteger(value.protocolVersion)
+      || typeof value.javaVersion !== "string"
+      || typeof value.pluginVersion !== "string"
+      || typeof value.luceneVersion !== "string"
+      || !Array.isArray(value.analyzers)
+      || value.analyzers.length === 0
+      || value.analyzers.length > 100) {
+    throw new Error("PROCESS_PROTOCOL_ERROR: Invalid plugin version result.");
+  }
+  const analyzers: AnalyzerDefinition[] = [];
+  const names = new Set<string>();
+  for (const item of value.analyzers) {
+    if (!isRecord(item)
+        || !isAnalyzerName(item.name)
+        || typeof item.label !== "string"
+        || item.label.trim().length === 0
+        || item.label.length > 100
+        || names.has(item.name)) {
+      throw new Error("PROCESS_PROTOCOL_ERROR: Invalid plugin analyzer declaration.");
+    }
+    names.add(item.name);
+    analyzers.push({name: item.name, label: item.label});
+  }
+  return {
+    cliVersion: value.cliVersion,
+    protocolVersion: Number(value.protocolVersion),
+    javaVersion: value.javaVersion,
+    pluginVersion: value.pluginVersion,
+    luceneVersion: value.luceneVersion,
+    analyzers
+  };
 }
 
 export function parseFieldSummaries(value: unknown): FieldSummary[] {

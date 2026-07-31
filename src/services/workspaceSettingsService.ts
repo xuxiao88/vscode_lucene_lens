@@ -8,12 +8,16 @@ const SETTINGS_FILE = "lucene-lens.json";
 
 interface WorkspaceSettingsFile {
   version: 1;
+  manualIndexes: string[];
   indexes: Record<string, AnalyzerSettings>;
 }
 
-interface SettingsTarget {
+interface WorkspaceSettingsTarget {
   directoryUri: vscode.Uri;
   fileUri: vscode.Uri;
+}
+
+interface SettingsTarget extends WorkspaceSettingsTarget {
   indexKey: string;
 }
 
@@ -21,6 +25,31 @@ export class WorkspaceSettingsService {
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly output: vscode.OutputChannel) {}
+
+  async loadManualIndexPaths(): Promise<string[]> {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    const paths = new Set<string>();
+    for (const folder of folders) {
+      const file = await this.read(this.workspaceTarget(folder).fileUri);
+      for (const value of file.manualIndexes) {
+        paths.add(vscode.Uri.parse(value, true).fsPath);
+      }
+    }
+    return [...paths];
+  }
+
+  addManualIndexPath(indexPath: string): Promise<void> {
+    return this.updateManualIndexes(indexPath, (indexes, indexUri) => {
+      if (!indexes.includes(indexUri)) indexes.push(indexUri);
+    });
+  }
+
+  removeManualIndexPath(indexPath: string): Promise<void> {
+    return this.updateManualIndexes(indexPath, (indexes, indexUri) => {
+      const index = indexes.indexOf(indexUri);
+      if (index >= 0) indexes.splice(index, 1);
+    });
+  }
 
   async load(indexPath: string): Promise<AnalyzerSettings | undefined> {
     const target = this.resolveTarget(indexPath);
@@ -59,6 +88,27 @@ export class WorkspaceSettingsService {
     return operation;
   }
 
+  private updateManualIndexes(
+    indexPath: string,
+    update: (indexes: string[], indexUri: string) => void
+  ): Promise<void> {
+    const operation = this.writeQueue.then(async () => {
+      const target = this.resolveTarget(indexPath);
+      if (!target) {
+        throw new Error(
+          "Open a workspace folder before saving manually added Lucene indexes."
+        );
+      }
+      const file = await this.read(target.fileUri);
+      update(file.manualIndexes, vscode.Uri.file(indexPath).toString(true));
+      file.manualIndexes.sort((left, right) => left.localeCompare(right));
+      await this.write(target, file);
+      this.output.appendLine(`Saved manual index directories to ${target.fileUri.toString()}`);
+    });
+    this.writeQueue = operation.catch(() => undefined);
+    return operation;
+  }
+
   private resolveTarget(indexPath: string): SettingsTarget | undefined {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) return undefined;
@@ -66,14 +116,32 @@ export class WorkspaceSettingsService {
     const containingFolder = vscode.workspace.getWorkspaceFolder(indexUri);
     const storageFolder = containingFolder ?? workspaceFolders[0];
     if (!storageFolder) return undefined;
-    const directoryUri = vscode.Uri.joinPath(storageFolder.uri, SETTINGS_DIRECTORY);
+    const workspaceTarget = this.workspaceTarget(storageFolder);
     return {
-      directoryUri,
-      fileUri: vscode.Uri.joinPath(directoryUri, SETTINGS_FILE),
+      ...workspaceTarget,
       indexKey: containingFolder
         ? normalizeRelativePath(relative(containingFolder.uri.fsPath, indexUri.fsPath))
         : indexUri.toString(true)
     };
+  }
+
+  private workspaceTarget(folder: vscode.WorkspaceFolder): WorkspaceSettingsTarget {
+    const directoryUri = vscode.Uri.joinPath(folder.uri, SETTINGS_DIRECTORY);
+    return {
+      directoryUri,
+      fileUri: vscode.Uri.joinPath(directoryUri, SETTINGS_FILE)
+    };
+  }
+
+  private async write(
+    target: WorkspaceSettingsTarget,
+    file: WorkspaceSettingsFile
+  ): Promise<void> {
+    await vscode.workspace.fs.createDirectory(target.directoryUri);
+    await vscode.workspace.fs.writeFile(
+      target.fileUri,
+      new TextEncoder().encode(`${JSON.stringify(file, null, 2)}\n`)
+    );
   }
 
   private async read(fileUri: vscode.Uri): Promise<WorkspaceSettingsFile> {
@@ -82,7 +150,11 @@ export class WorkspaceSettingsService {
       content = await vscode.workspace.fs.readFile(fileUri);
     } catch (error) {
       if (error instanceof vscode.FileSystemError && error.code === "FileNotFound") {
-        return {version: 1, indexes: Object.create(null) as Record<string, AnalyzerSettings>};
+        return {
+          version: 1,
+          manualIndexes: [],
+          indexes: Object.create(null) as Record<string, AnalyzerSettings>
+        };
       }
       throw error;
     }
@@ -92,7 +164,12 @@ export class WorkspaceSettingsService {
     } catch {
       throw new Error(`${fileUri.fsPath} is not valid JSON.`);
     }
-    if (!isRecord(value) || value.version !== 1 || !isRecord(value.indexes)) {
+    if (!isRecord(value)
+        || value.version !== 1
+        || !isRecord(value.indexes)
+        || (value.manualIndexes !== undefined
+          && (!Array.isArray(value.manualIndexes)
+            || !value.manualIndexes.every(isFileUri)))) {
       throw new Error(`${fileUri.fsPath} has an unsupported Lucene Lens settings format.`);
     }
     const indexes = Object.create(null) as Record<string, AnalyzerSettings>;
@@ -107,7 +184,11 @@ export class WorkspaceSettingsService {
         fieldAnalyzers: {...rawSettings.fieldAnalyzers}
       };
     }
-    return {version: 1, indexes};
+    return {
+      version: 1,
+      manualIndexes: value.manualIndexes ? [...value.manualIndexes] as string[] : [],
+      indexes
+    };
   }
 }
 
@@ -125,4 +206,13 @@ function isAnalyzerSettings(value: unknown): value is AnalyzerSettings {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFileUri(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    return vscode.Uri.parse(value, true).scheme === "file";
+  } catch {
+    return false;
+  }
 }

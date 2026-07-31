@@ -1,5 +1,6 @@
 package dev.lucenelens.cli.core.spi;
 
+import dev.lucenelens.cli.core.model.AnalyzerDefinition;
 import dev.lucenelens.cli.core.model.PluginException;
 
 import java.io.IOException;
@@ -7,7 +8,10 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
 import java.util.ServiceLoader;
 
 public final class PluginLoader implements AutoCloseable {
@@ -34,6 +38,7 @@ public final class PluginLoader implements AutoCloseable {
                 closeQuietly();
                 throw new PluginException("LUCENE_PLUGIN_LOAD_FAILED", "The plugin jar contains multiple SPI implementations.");
             }
+            validateAnalyzers(plugin);
         } catch (PluginException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -55,6 +60,40 @@ public final class PluginLoader implements AutoCloseable {
             classLoader.close();
         } catch (IOException ignored) {
             // The original plugin error is more useful.
+        }
+    }
+
+    private void validateAnalyzers(LucenePlugin loadedPlugin) {
+        List<AnalyzerDefinition> analyzers;
+        try {
+            analyzers = loadedPlugin.analyzers();
+        } catch (RuntimeException exception) {
+            closeQuietly();
+            throw new PluginException(
+                    "LUCENE_PLUGIN_API_INCOMPATIBLE",
+                    "The Lucene plugin could not declare its analyzers.",
+                    exception);
+        }
+        if (analyzers == null || analyzers.isEmpty()) {
+            closeQuietly();
+            throw new PluginException(
+                    "LUCENE_PLUGIN_API_INCOMPATIBLE",
+                    "The Lucene plugin does not declare any analyzers.");
+        }
+        Set<String> names = new HashSet<>();
+        boolean invalid = analyzers.size() > 100 || analyzers.stream().anyMatch(analyzer ->
+                analyzer == null
+                        || analyzer.getName() == null
+                        || !analyzer.getName().matches("[a-z][a-z0-9_-]{0,63}")
+                        || analyzer.getLabel() == null
+                        || analyzer.getLabel().isBlank()
+                        || analyzer.getLabel().length() > 100
+                        || !names.add(analyzer.getName()));
+        if (invalid) {
+            closeQuietly();
+            throw new PluginException(
+                    "LUCENE_PLUGIN_API_INCOMPATIBLE",
+                    "The Lucene plugin contains an invalid analyzer declaration.");
         }
     }
 }

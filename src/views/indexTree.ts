@@ -54,7 +54,9 @@ export class IndexTree implements vscode.TreeDataProvider<vscode.TreeItem>, vsco
       item.description = index.description;
       item.tooltip = index.absolutePath;
       item.iconPath = new vscode.ThemeIcon("database");
-      item.contextValue = "luceneIndex";
+      item.contextValue = index.manuallyAdded
+        ? "luceneLens.manualIndex"
+        : "luceneLens.index";
       item.command = {
         command: "luceneLens.openIndex",
         title: "Open Lucene Index",

@@ -7,13 +7,21 @@ export type PageStatus =
   | "error"
   | "cancelled";
 
-export type AnalyzerName =
-  | "standard"
-  | "keyword"
-  | "whitespace"
-  | "simple"
-  | "cjk"
-  | "smartcn";
+export type AnalyzerName = string;
+
+export interface AnalyzerDefinition {
+  name: AnalyzerName;
+  label: string;
+}
+
+export interface PluginVersionResult {
+  cliVersion: string;
+  protocolVersion: number;
+  javaVersion: string;
+  pluginVersion: string;
+  luceneVersion: string;
+  analyzers: AnalyzerDefinition[];
+}
 
 export interface FieldSummary {
   name: string;
@@ -88,6 +96,7 @@ export interface ResolvedIndex {
   displayName: string;
   description: string;
   detectedLuceneMajor: number;
+  manuallyAdded: boolean;
 }
 
 export interface LensPageState {
@@ -101,6 +110,7 @@ export interface LensPageState {
   totalRelation: "exact" | "lowerBound";
   query: string;
   analyzer: AnalyzerName;
+  analyzers: AnalyzerDefinition[];
   searchableFields: string[];
   fieldAnalyzers: Record<string, AnalyzerName>;
   hasPrevious: boolean;

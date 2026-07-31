@@ -5,10 +5,12 @@ import {
   parseDocumentPage,
   parseDocumentRow,
   parseFieldSummaries,
+  parsePluginVersionResult,
   parseWebviewMessage
 } from "../protocol/validation";
 import type {
   AnalyzerSettings,
+  AnalyzerDefinition,
   AnalyzerName,
   DocumentRow,
   HostMessage,
@@ -70,6 +72,7 @@ export class LensPanel implements vscode.Disposable {
   private preferredIndexId: string | undefined;
   private settingsChangeQueue: Promise<void> = Promise.resolve();
   private readonly searchableFieldCache = new Map<string, string[]>();
+  private pluginAnalyzers: Promise<AnalyzerDefinition[]> | undefined;
   private state: LensPageState;
 
   private constructor(
@@ -92,6 +95,7 @@ export class LensPanel implements vscode.Disposable {
       totalRelation: "exact",
       query: "",
       analyzer: this.configuredAnalyzer(),
+      analyzers: [],
       searchableFields: [],
       fieldAnalyzers: {},
       hasPrevious: false,
@@ -123,6 +127,16 @@ export class LensPanel implements vscode.Disposable {
       return;
     }
     await this.rescan(indexId);
+  }
+
+  async indexesChanged(): Promise<void> {
+    const indexes = this.indexService.getCached();
+    const selectedIndexId = this.state.selectedIndexId;
+    if (selectedIndexId && indexes.some((index) => index.id === selectedIndexId)) {
+      this.resolvedIndexes = indexes;
+      return;
+    }
+    if (this.webviewReady) await this.applyIndexes(indexes);
   }
 
   async rescan(preferredIndexId = this.preferredIndexId): Promise<void> {
@@ -264,6 +278,7 @@ export class LensPanel implements vscode.Disposable {
   ): Promise<void> {
     this.cancelCurrent();
     this.resolvedIndexes = indexes;
+    const analyzers = await (this.pluginAnalyzers ??= this.loadPluginAnalyzers());
     if (indexes.length === 0) {
       this.preferredIndexId = undefined;
       this.cursors = [undefined];
@@ -272,6 +287,7 @@ export class LensPanel implements vscode.Disposable {
         selectedIndexId: undefined,
         selectedLuceneMajor: undefined,
         rows: [],
+        analyzers,
         searchableFields: [],
         fieldAnalyzers: {},
         total: "0",
@@ -288,14 +304,25 @@ export class LensPanel implements vscode.Disposable {
     const settings = selectedIndex
       ? await this.workspaceSettings.load(selectedIndex.absolutePath)
       : undefined;
+    const analyzerNames = new Set(analyzers.map((analyzer) => analyzer.name));
+    const requestedAnalyzer = settings?.analyzer ?? this.configuredAnalyzer();
+    const analyzer = analyzerNames.has(requestedAnalyzer)
+      ? requestedAnalyzer
+      : analyzers[0]?.name;
+    if (!analyzer) throw new Error("The selected Lucene plugin does not declare any analyzers.");
+    const fieldAnalyzers = Object.fromEntries(
+      Object.entries(settings?.fieldAnalyzers ?? {})
+        .filter(([, fieldAnalyzer]) => analyzerNames.has(fieldAnalyzer))
+    );
     this.cursors = [undefined];
     this.update({
       selectedIndexId,
       selectedLuceneMajor: 9,
       query: "",
-      analyzer: settings?.analyzer ?? this.configuredAnalyzer(),
+      analyzer,
+      analyzers,
       searchableFields: [],
-      fieldAnalyzers: settings?.fieldAnalyzers ?? {},
+      fieldAnalyzers,
       pageNumber: 1,
       rows: [],
       total: "0",
@@ -317,6 +344,7 @@ export class LensPanel implements vscode.Disposable {
     const selectedIndexId = this.state.selectedIndexId;
     const changed = await this.enqueueSettingsChange(async () => {
       if (this.state.selectedIndexId !== selectedIndexId
+          || !this.supportsAnalyzer(analyzer)
           || this.state.analyzer === analyzer) {
         return false;
       }
@@ -340,6 +368,7 @@ export class LensPanel implements vscode.Disposable {
     const changed = await this.enqueueSettingsChange(async () => {
       if (this.state.selectedIndexId !== selectedIndexId
           || !this.state.searchableFields.includes(field)
+          || !this.supportsAnalyzer(analyzer)
           || this.state.fieldAnalyzers[field] === analyzer) {
         return false;
       }
@@ -489,16 +518,17 @@ export class LensPanel implements vscode.Disposable {
     const value = vscode.workspace
       .getConfiguration("luceneLens")
       .get<string>("query.analyzer", "standard");
-    if (value === "standard"
-        || value === "keyword"
-        || value === "whitespace"
-        || value === "simple"
-        || value === "cjk"
-        || value === "smartcn") {
-      return value;
-    }
-    this.output.appendLine(`Unsupported analyzer configuration '${value}', falling back to standard.`);
-    return "standard";
+    return value;
+  }
+
+  private async loadPluginAnalyzers(): Promise<AnalyzerDefinition[]> {
+    return parsePluginVersionResult(
+      await this.runner.run<unknown>("version", [])
+    ).analyzers;
+  }
+
+  private supportsAnalyzer(analyzer: AnalyzerName): boolean {
+    return this.state.analyzers.some((candidate) => candidate.name === analyzer);
   }
 
   private startOperation(): vscode.CancellationToken {
@@ -589,14 +619,7 @@ export class LensPanel implements vscode.Disposable {
     <section id="querySettingsPanel" class="query-settings" hidden>
       <div class="query-settings-default">
         <label>Default analyzer
-          <select id="analyzerSelect">
-            <option value="standard">Standard</option>
-            <option value="keyword">Keyword</option>
-            <option value="whitespace">Whitespace</option>
-            <option value="simple">Simple</option>
-            <option value="cjk">CJK</option>
-            <option value="smartcn">Smart Chinese</option>
-          </select>
+          <select id="analyzerSelect"></select>
         </label>
         <span>Used by fields that inherit the default.</span>
       </div>

@@ -133,6 +133,7 @@ public final class CliCommand implements Callable<Integer> {
             return parent.withPlugin(plugin -> {
                 result.put("pluginVersion", plugin.pluginVersion());
                 result.put("luceneVersion", plugin.luceneVersion());
+                result.put("analyzers", plugin.analyzers());
                 return result;
             });
         }
@@ -178,7 +179,7 @@ public final class CliCommand implements Callable<Integer> {
     @Command(name = "query")
     static final class QueryCommand extends IndexCommand {
         @Option(names = "--query", required = true) String query;
-        @Option(names = "--analyzer", defaultValue = "standard") String analyzer;
+        @Option(names = "--analyzer", required = true) String analyzer;
         @Option(names = "--field-analyzer", arity = "2") List<String> fieldAnalyzers = new ArrayList<>();
         @Option(names = "--cursor", defaultValue = "") String cursor;
         @Option(names = "--limit", defaultValue = "50") int limit;
@@ -188,16 +189,19 @@ public final class CliCommand implements Callable<Integer> {
         @Override public Integer call() {
             validateLimit(limit);
             if (maxHits < 1) throw new PluginException("INVALID_REQUEST", "--max-hits must be positive.");
-            return parent.withPlugin(plugin ->
-                    plugin.query(
-                            index,
-                            query,
-                            analyzer,
-                            parseFieldAnalyzers(fieldAnalyzers),
-                            cursor,
-                            limit,
-                            maxHits,
-                            includeBinary));
+            return parent.withPlugin(plugin -> {
+                Map<String, String> configuredFields = parseFieldAnalyzers(fieldAnalyzers);
+                validateAnalyzers(plugin, analyzer, configuredFields);
+                return plugin.query(
+                        index,
+                        query,
+                        analyzer,
+                        configuredFields,
+                        cursor,
+                        limit,
+                        maxHits,
+                        includeBinary);
+            });
         }
     }
 
@@ -205,18 +209,42 @@ public final class CliCommand implements Callable<Integer> {
     static final class ExportCommand extends IndexCommand {
         @Option(names = "--target", required = true) Path target;
         @Option(names = "--query", defaultValue = "") String query;
-        @Option(names = "--analyzer", defaultValue = "standard") String analyzer;
+        @Option(names = "--analyzer", required = true) String analyzer;
         @Option(names = "--field-analyzer", arity = "2") List<String> fieldAnalyzers = new ArrayList<>();
         @Option(names = "--max-hits", defaultValue = "10000") int maxHits;
         @Override public Integer call() {
             if (maxHits < 1) throw new PluginException("INVALID_REQUEST", "--max-hits must be positive.");
-            return parent.withPlugin(plugin -> plugin.exportCsv(
-                    index,
-                    target,
-                    query,
-                    analyzer,
-                    parseFieldAnalyzers(fieldAnalyzers),
-                    maxHits));
+            return parent.withPlugin(plugin -> {
+                Map<String, String> configuredFields = parseFieldAnalyzers(fieldAnalyzers);
+                validateAnalyzers(plugin, analyzer, configuredFields);
+                return plugin.exportCsv(
+                        index,
+                        target,
+                        query,
+                        analyzer,
+                        configuredFields,
+                        maxHits);
+            });
+        }
+    }
+
+    private static void validateAnalyzers(
+            LucenePlugin plugin,
+            String analyzer,
+            Map<String, String> fieldAnalyzers) {
+        List<String> supported = new ArrayList<>();
+        plugin.analyzers().forEach(definition -> supported.add(definition.getName()));
+        if (!supported.contains(analyzer)) {
+            throw new PluginException(
+                    "INVALID_REQUEST",
+                    "The selected Lucene plugin does not support analyzer: " + analyzer);
+        }
+        for (String fieldAnalyzer : fieldAnalyzers.values()) {
+            if (!supported.contains(fieldAnalyzer)) {
+                throw new PluginException(
+                        "INVALID_REQUEST",
+                        "The selected Lucene plugin does not support analyzer: " + fieldAnalyzer);
+            }
         }
     }
 

@@ -8,8 +8,8 @@ import {LensPanel} from "./webview/lensPanel";
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("Lucene Lens", {log: true});
   const runner = new JavaCommandRunner(context.extensionPath, output);
-  const indexes = new IndexDirectoryService(runner, output);
   const workspaceSettings = new WorkspaceSettingsService(output);
+  const indexes = new IndexDirectoryService(runner, workspaceSettings, output);
   const indexTree = new IndexTree(indexes);
   const open = (): LensPanel =>
     LensPanel.createOrShow(context, runner, indexes, workspaceSettings, output);
@@ -60,6 +60,23 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.commands.registerCommand("luceneLens.refreshIndexes", () => indexTree.refresh()),
+    vscode.commands.registerCommand(
+      "luceneLens.removeIndex",
+      async (item: vscode.TreeItem | undefined) => {
+        if (!item?.id) return;
+        try {
+          if (await indexes.removeManual(item.id)) {
+            await LensPanel.getCurrent()?.indexesChanged();
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          output.appendLine(`Unable to remove manual index: ${message}`);
+          await vscode.window.showErrorMessage(
+            `Unable to remove the Lucene index from the list: ${message}`
+          );
+        }
+      }
+    ),
     vscode.commands.registerCommand("luceneLens.rescanWorkspace", async () => open().rescan()),
     vscode.commands.registerCommand("luceneLens.export", async () => open().exportCurrent()),
     vscode.commands.registerCommand("luceneLens.showLogs", () => output.show()),

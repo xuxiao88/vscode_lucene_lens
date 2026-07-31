@@ -1,19 +1,15 @@
-import type {DocumentRow, HostMessage, LensPageState} from "../protocol/types";
+import type {
+  AnalyzerDefinition,
+  DocumentRow,
+  HostMessage,
+  LensPageState
+} from "../protocol/types";
 
 declare function acquireVsCodeApi<T = unknown>(): {
   postMessage(message: unknown): void;
   getState(): T | undefined;
   setState(state: T): void;
 };
-
-const ANALYZER_OPTIONS = [
-  ["standard", "Standard"],
-  ["keyword", "Keyword"],
-  ["whitespace", "Whitespace"],
-  ["simple", "Simple"],
-  ["cjk", "CJK"],
-  ["smartcn", "Smart Chinese"]
-] as const;
 
 const vscode = acquireVsCodeApi<LensPageState>();
 const elements = {
@@ -44,6 +40,7 @@ const elements = {
 let addingFieldAnalyzer = false;
 let state: LensPageState | undefined = vscode.getState();
 if (state
+    && Array.isArray(state.analyzers)
     && Array.isArray(state.searchableFields)
     && state.fieldAnalyzers
     && typeof state.fieldAnalyzers === "object") {
@@ -98,8 +95,12 @@ vscode.postMessage({type: "ready"});
 
 function render(next: LensPageState): void {
   elements.search.value = next.query;
+  elements.analyzer.replaceChildren(
+    ...next.analyzers.map((analyzer) => analyzerOption(analyzer.name, analyzer.label))
+  );
   elements.analyzer.value = next.analyzer;
-  elements.analyzer.disabled = !next.selectedIndexId || next.status === "scanning";
+  elements.analyzer.disabled =
+    !next.selectedIndexId || next.status === "scanning" || next.analyzers.length === 0;
   elements.pageSize.value = String(next.pageSize);
   elements.pageNumber.textContent = `Page ${next.pageNumber}`;
   elements.total.textContent =
@@ -140,14 +141,15 @@ function renderFieldAnalyzers(next: LensPageState): void {
     const row = document.createElement("div");
     row.className = "field-analyzer";
     const name = document.createElement("span");
+    name.className = "field-analyzer-name";
     name.textContent = field;
     name.title = field;
     const select = document.createElement("select");
     select.setAttribute("aria-label", `Analyzer for ${field}`);
-    for (const [value, text] of ANALYZER_OPTIONS) {
-      select.append(analyzerOption(value, text));
+    for (const analyzer of next.analyzers) {
+      select.append(analyzerOption(analyzer.name, analyzer.label));
     }
-    select.value = next.fieldAnalyzers[field] ?? "standard";
+    select.value = next.fieldAnalyzers[field] ?? next.analyzer;
     select.disabled = next.status === "scanning";
     select.addEventListener("change", () =>
       vscode.postMessage({
@@ -159,7 +161,9 @@ function renderFieldAnalyzers(next: LensPageState): void {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "field-analyzer-remove";
-    remove.textContent = "Remove";
+    remove.textContent = "×";
+    remove.title = `Remove analyzer override for ${field}`;
+    remove.setAttribute("aria-label", `Remove analyzer override for ${field}`);
     remove.disabled = next.status === "scanning";
     remove.addEventListener("click", () =>
       vscode.postMessage({type: "removeFieldAnalyzer", field})
@@ -168,13 +172,16 @@ function renderFieldAnalyzers(next: LensPageState): void {
     elements.fieldAnalyzers.append(row);
   }
   if (addingFieldAnalyzer && availableFields.length > 0) {
-    elements.fieldAnalyzers.append(createFieldAnalyzerEditor(availableFields));
+    elements.fieldAnalyzers.append(createFieldAnalyzerEditor(availableFields, next.analyzers));
   } else {
     addingFieldAnalyzer = false;
   }
 }
 
-function createFieldAnalyzerEditor(availableFields: string[]): HTMLElement {
+function createFieldAnalyzerEditor(
+  availableFields: string[],
+  analyzers: AnalyzerDefinition[]
+): HTMLElement {
   const row = document.createElement("div");
   row.className = "field-analyzer field-analyzer-editor";
   const fieldSelect = document.createElement("select");
@@ -188,8 +195,8 @@ function createFieldAnalyzerEditor(availableFields: string[]): HTMLElement {
   }
   const analyzerSelect = document.createElement("select");
   analyzerSelect.setAttribute("aria-label", "Analyzer");
-  for (const [value, text] of ANALYZER_OPTIONS) {
-    analyzerSelect.append(analyzerOption(value, text));
+  for (const analyzer of analyzers) {
+    analyzerSelect.append(analyzerOption(analyzer.name, analyzer.label));
   }
   const actions = document.createElement("span");
   actions.className = "field-analyzer-actions";

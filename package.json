@@ -13,7 +13,8 @@
     "onView:luceneLens.indexes",
     "onCommand:luceneLens.open",
     "onCommand:luceneLens.openIndex",
-    "onCommand:luceneLens.chooseIndexDirectory"
+    "onCommand:luceneLens.chooseIndexDirectory",
+    "onCommand:luceneLens.removeIndex"
   ],
   "extensionKind": ["workspace"],
   "main": "./dist/extension/extension.js",
@@ -31,6 +32,12 @@
         "title": "Refresh Lucene Indexes",
         "category": "Lucene Lens",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "luceneLens.removeIndex",
+        "title": "Remove Lucene Index from List",
+        "category": "Lucene Lens",
+        "icon": "$(trash)"
       },
       {"command": "luceneLens.rescanWorkspace", "title": "Rescan Workspace Indexes", "category": "Lucene Lens"},
       {"command": "luceneLens.export", "title": "Export Results", "category": "Lucene Lens"},
@@ -57,6 +64,19 @@
           "command": "luceneLens.refreshIndexes",
           "when": "view == luceneLens.indexes",
           "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "luceneLens.removeIndex",
+          "when": "view == luceneLens.indexes && viewItem == luceneLens.manualIndex",
+          "group": "inline@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "luceneLens.removeIndex",
+          "when": "false"
         }
       ]
     },
@@ -89,17 +109,9 @@
         },
         "luceneLens.query.analyzer": {
           "type": "string",
-          "enum": ["standard", "keyword", "whitespace", "simple", "cjk", "smartcn"],
           "default": "standard",
-          "enumDescriptions": [
-            "General-purpose Unicode text analysis.",
-            "Treat the complete input as one token.",
-            "Split text only at whitespace.",
-            "Split on non-letters and lowercase tokens.",
-            "Analyze Chinese, Japanese, and Korean text.",
-            "Analyze Chinese text with Smart Chinese."
-          ],
-          "description": "Default analyzer used by Lucene Query Parser. It can also be changed in Query Settings."
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "description": "Preferred default analyzer ID. Available analyzers are declared by the selected Lucene plugin and can be changed in Query Settings."
         },
         "luceneLens.requestTimeout": {
           "type": "number",

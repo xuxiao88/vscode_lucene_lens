@@ -66,6 +66,7 @@ vscode_lucene_lens/
 - `cli-core/model` 统一放置成功结果、错误信息、分页结构和领域数据，不再拆分 output、error、model 包。
 - CLI 公共入口统一完成 JSON 序列化、异常转换和退出码设置。
 - `cli-core/spi` 定义版本无关的插件接口，方法参数和返回值只能使用 core model，不能暴露 Lucene 类型。
+- 每个版本插件通过 SPI 声明非空的 Analyzer 列表，包括稳定 ID 和显示名称；core 校验 ID 格式、重复项，并拒绝查询或导出使用未声明的 Analyzer。
 - `cli-plugin-lucene-<major>/util` 是唯一允许直接导入和调用 `org.apache.lucene.*` 的位置。
 - 调用方向固定为 `command -> service -> spi <- plugin adapter -> util -> Lucene API`。
 - 插件 `adapter` 负责把 core SPI 适配到当前版本的 util；service 不通过版本判断或反射选择实现。
@@ -91,6 +92,7 @@ vscode_lucene_lens/
 | `luceneLens.open` | Open Lucene Lens | 在编辑区打开或聚焦 Lucene Lens 页面 |
 | `luceneLens.openIndex` | Open Lucene Index | 由侧边栏索引项调用，打开页面并选中指定索引；不显示在命令面板 |
 | `luceneLens.chooseIndexDirectory` | Select Lucene Index Directory | 手动选择、验证并打开工作区内外的 Lucene 索引目录 |
+| `luceneLens.removeIndex` | Remove Lucene Index from List | 由手动索引项的删除按钮调用，只移除持久化引用，不删除索引文件；不显示在命令面板 |
 | `luceneLens.refreshIndexes` | Refresh Lucene Indexes | 刷新并重新校验侧边栏中的自动发现和手动加入索引 |
 | `luceneLens.rescanWorkspace` | Rescan Workspace Indexes | 重新扫描当前工作区中的 Lucene 索引目录并更新侧边栏及当前页面 |
 | `luceneLens.export` | Export Results | 将当前文档或查询结果导出为 CSV |
@@ -116,7 +118,18 @@ java -Xmx512m -jar dist/cli/lucene-lens-cli.jar \
 
 路径和查询内容均作为独立参数传递。标准输入默认关闭，不用于维护交互会话。
 
-core 根据 `--plugin` 创建独立 class loader，通过 Java `ServiceLoader` 获取 SPI 实现；每次进程只加载一个插件，并在命令结束时关闭 class loader。
+core 根据 `--plugin` 创建独立 class loader，通过 Java `ServiceLoader` 获取 SPI 实现；每次进程只加载一个插件，并在命令结束时关闭 class loader。`version` 命令返回插件声明的 Analyzer 能力，例如：
+
+```json
+{
+  "analyzers": [
+    {"name": "standard", "label": "Standard"},
+    {"name": "smartcn", "label": "Smart Chinese"}
+  ]
+}
+```
+
+Analyzer `name` 是 CLI 参数和工作区配置使用的稳定 ID，必须匹配 `[a-z][a-z0-9_-]{0,63}`；`label` 仅用于界面显示。列表不能为空，名称不能重复。
 
 成功时 stdout 输出一个 JSON 对象：
 
@@ -211,7 +224,7 @@ stderr 仅记录诊断日志。若进程被强制终止、JVM 无法启动或 st
 | `luceneLens.cli.maxHeap` | `512m` | 单次 Java CLI 命令最大堆 |
 | `luceneLens.pageSize` | `50` | 默认分页大小 |
 | `luceneLens.query.maxHits` | `10000` | 单次查询允许遍历的最大命中数 |
-| `luceneLens.query.analyzer` | `standard` | 默认查询 Analyzer，可选 `standard`、`keyword`、`whitespace`、`simple`、`cjk` 或 `smartcn` |
+| `luceneLens.query.analyzer` | `standard` | 首选默认 Analyzer ID；若当前插件未声明该 ID，则使用插件声明列表的第一项 |
 | `luceneLens.requestTimeout` | `30000` | 普通请求超时，单位毫秒 |
 | `luceneLens.showSensitiveValuesInLogs` | `false` | 是否允许日志记录字段值 |
 
@@ -222,6 +235,9 @@ stderr 仅记录诊断日志。若进程被强制终止、JVM 无法启动或 st
 ```json
 {
   "version": 1,
+  "manualIndexes": [
+    "file:///absolute/path/to/manual-index"
+  ],
   "indexes": {
     "relative/path/to/index": {
       "analyzer": "standard",
@@ -233,7 +249,7 @@ stderr 仅记录诊断日志。若进程被强制终止、JVM 无法启动或 st
 }
 ```
 
-工作区内索引使用相对于所属 workspace folder 的 `/` 分隔路径，索引就是 workspace folder 时使用 `"."`；工作区外索引使用规范化文件 URI。读取时必须校验版本、Analyzer 名称和字段映射，格式错误时不得覆盖原文件。
+`manualIndexes` 使用规范化文件 URI，并由索引所属 workspace folder 保存；工作区外索引保存到第一个 workspace folder。旧文件缺少该字段时按空列表处理。Analyzer 设置中，工作区内索引使用相对于所属 workspace folder 的 `/` 分隔路径，索引就是 workspace folder 时使用 `"."`；工作区外索引使用规范化文件 URI。读取时必须校验版本、手动索引 URI、Analyzer 名称和字段映射，格式错误时不得覆盖原文件。
 
 ### 2.3 交互设计
 
@@ -245,10 +261,11 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Indexes` 视图直接承�
 2. 扫描成功后逐项展示索引名称、Lucene 版本和路径 tooltip；不再显示中转性质的打开按钮。
 3. 点击索引项执行内部命令 `luceneLens.openIndex`。如果页面尚未打开，在编辑区创建单例 Webview 页面并选中该索引；如果页面已经打开，则聚焦页面并切换索引。
 4. 视图标题栏提供目录选择按钮，执行 `luceneLens.chooseIndexDirectory`。用户可以选择工作区内外的具体索引目录；扩展执行只读 `probe`，验证成功后把目录加入列表并立即打开。
-5. 手动加入的目录在当前扩展会话中保留，后续刷新仍参与校验和列表合并；自动扫描和手动选择得到的相同目录只展示一次。
-6. 视图标题栏提供刷新按钮，执行 `luceneLens.refreshIndexes`；页面内重新扫描得到的结果也同步到侧边栏。
-7. 未发现索引、工作区未受信任或扫描失败时，在列表中显示对应状态。
-8. 侧边栏和页面共享扩展进程缓存的扫描结果，点击索引时不重复执行 `probe`。
+5. 手动加入的目录写入工作区 `.vscode/lucene-lens.json`，关闭页面或重启编辑器后继续参与校验和列表合并；自动扫描和手动选择得到的相同目录只展示一次。
+6. 手动索引项提供删除按钮，执行 `luceneLens.removeIndex`。删除只移除 JSON 中的目录引用；如果同一路径也能被工作区自动扫描到，则保留为自动索引，任何情况下都不得删除索引文件。
+7. 视图标题栏提供刷新按钮，执行 `luceneLens.refreshIndexes`；页面内重新扫描得到的结果也同步到侧边栏。
+8. 未发现索引、工作区未受信任或扫描失败时，在列表中显示对应状态。
+9. 侧边栏和页面共享扩展进程缓存的扫描结果，点击索引时不重复执行 `probe`。
 
 #### 2.3.2 页面布局
 
@@ -330,7 +347,7 @@ Activity Bar 增加 `Lucene Lens` 图标，对应的 `Indexes` 视图直接承�
 
 - 搜索框只作用于当前由侧边栏选中的索引。
 - 按 Enter 或点击搜索图标后执行查询。
-- 查询设置提供 Standard、Keyword、Whitespace、Simple、CJK 和 Smart Chinese 六种内置 Analyzer；默认 Analyzer 初始值来自 `luceneLens.query.analyzer`。
+- 查询设置根据当前版本插件的声明展示 Analyzer；Lucene 9 插件声明 Standard、Keyword、Whitespace、Simple、CJK 和 Smart Chinese。
 - 每个 `indexed` 字段默认继承默认 Analyzer；仅实际添加的覆盖规则显示在列表中，添加规则时通过下拉选择尚未配置的字段。
 - 字段名称来自只读 `fields` 命令，Extension Host 再次校验，不能由 Webview 任意注入。
 - 空搜索内容表示取消查询并恢复普通文档浏览。
@@ -515,9 +532,15 @@ interface LensPageState {
   page: PageState;
   total: string;
   analyzer: AnalyzerName;
+  analyzers: AnalyzerDefinition[];
   searchableFields: string[];
   fieldAnalyzers: Record<string, AnalyzerName>;
   error?: string;
+}
+
+interface AnalyzerDefinition {
+  name: string;
+  label: string;
 }
 ```
 
@@ -563,9 +586,9 @@ Extension Host 必须先校验响应结构和 `protocolVersion`，再把 `result
 
 - `javaCommandRunner`：优先解析配置的 Java Home，未配置时使用系统 `PATH` 中的 `java`；以参数数组执行单次命令，收集 stdout/stderr，并处理版本校验、超时、取消、退出码和输出大小限制。
 - `luceneVersionResolver`：发现已打包插件、执行 `probe`、识别数据版本并维护当前索引的插件选择。
-- `indexDirectoryService`：扫描和维护工作区索引目录、版本匹配及页面缓存，不持有 Java reader 或进程。
-- `workspaceSettingsService`：校验并读写工作区 `.vscode/lucene-lens.json`，按索引保存默认 Analyzer 和字段级覆盖。
-- `protocol/validation`：校验来自 CLI 和 Webview 的所有消息。
+- `indexDirectoryService`：合并自动发现和持久化的手动索引目录，维护版本匹配及页面缓存，并处理手动引用删除；不持有 Java reader 或进程。
+- `workspaceSettingsService`：兼容校验并读写工作区 `.vscode/lucene-lens.json`，保存手动索引 URI、默认 Analyzer 和字段级覆盖。
+- `protocol/validation`：校验来自 CLI 和 Webview 的所有消息，包括插件 Analyzer 声明的格式、非空约束和重复项。
 - `views`：展示工作区索引扫描状态和索引导航项，通过索引 ID 驱动单例页面，不直接读取文件或启动进程。
 - `webview`：只负责展示与交互，数据统一通过扩展进程转发。
 
@@ -583,10 +606,11 @@ Extension Host 必须先校验响应结构和 `protocolVersion`，再把 `result
 首版使用 Lucene Query Parser，并限制以下能力：
 
 - `field:value` 形式按指定字段查询；未指定字段时，使用 `MultiFieldQueryParser` 查询当前索引全部文本索引字段。
-- 默认 Analyzer 初始值由 `luceneLens.query.analyzer` 配置，页面会话可切换 `StandardAnalyzer`、`KeywordAnalyzer`、`WhitespaceAnalyzer`、`SimpleAnalyzer`、`CJKAnalyzer` 和 `SmartChineseAnalyzer`。
+- Extension Host 通过 `version` 读取并缓存当前插件声明的 Analyzer 列表，Webview 不维护静态 Analyzer 清单。
+- 默认 Analyzer 优先采用 `luceneLens.query.analyzer`；若该 ID 不在当前插件声明中，则使用声明列表第一项。Lucene 9 插件当前声明 `StandardAnalyzer`、`KeywordAnalyzer`、`WhitespaceAnalyzer`、`SimpleAnalyzer`、`CJKAnalyzer` 和 `SmartChineseAnalyzer`。
 - 每个可查询字段默认继承默认 Analyzer，用户可按需添加字段级覆盖。Java 插件使用 `PerFieldAnalyzerWrapper`，未覆盖字段继续使用默认 Analyzer。
 - 默认 Analyzer 与字段级覆盖写入工作区 `.vscode/lucene-lens.json`。工作区内索引以相对路径为键，外部索引以文件 URI 为键；文件格式带版本号并在读取时严格校验。
-- CLI 使用 `--analyzer <name>` 传递默认值，并允许重复传入 `--field-analyzer <field> <name>`；字段名和 Analyzer 名均在插件侧校验。
+- CLI 使用必填的 `--analyzer <name>` 传递默认值，并允许重复传入 `--field-analyzer <field> <name>`；core 先确认 Analyzer 已由插件声明，插件再校验字段和完成实例化。
 - 默认及字段级 Analyzer 同时用于页面查询和查询结果导出；任一配置变化后查询 cursor 失效并从第一页重新执行。
 - 不支持通过任意类名加载 Analyzer。
 - 返回内部 doc ID、score 和表格当前展示的 stored fields、doc values。
@@ -707,6 +731,6 @@ CLI core 和 Lucene 插件 jar 均不包含平台原生依赖，使用同一套�
 1. 首版只支持 Lucene 9，只打包 `cli-plugin-lucene-9`；版本探测只需验证 Lucene 9 插件。
 2. 首版同时支持 macOS、Windows 和 Linux，不引入平台原生依赖。
 3. JDK 由用户环境提供。优先使用 `luceneLens.java.home`，未配置时使用系统 `PATH` 中的 `java`；解析出的 Java 可用且版本符合要求时直接使用，否则提示用户配置 Java Home。
-4. 查询设置提供六种内置 Analyzer、默认 Analyzer 和字段级继承/覆盖，其中中文查询可选择 `CJKAnalyzer` 或 `SmartChineseAnalyzer`。
+4. 查询设置按当前插件声明展示 Analyzer，支持默认 Analyzer 和字段级继承/覆盖；Lucene 9 插件声明六种内置 Analyzer，其中中文查询可选择 `CJKAnalyzer` 或 `SmartChineseAnalyzer`。
 5. 文档列表、详情和查询结果同时展示 stored fields 与 doc values。
 6. 导出格式仅支持 CSV。

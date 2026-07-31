@@ -1,12 +1,17 @@
 package dev.lucenelens.cli.core.spi;
 
+import dev.lucenelens.cli.core.model.AnalyzerDefinition;
+
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 public interface LucenePlugin {
     String pluginVersion();
 
     String luceneVersion();
+
+    List<AnalyzerDefinition> analyzers();
 
     Map<String, Object> probe(Path index);
 
