@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.vsix
+cli/**/target/
+.DS_Store

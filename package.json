@@ -1,0 +1,98 @@
+{
+  "name": "lucene-lens",
+  "displayName": "Lucene Lens",
+  "description": "Read-only Lucene 9 index viewer for Visual Studio Code.",
+  "version": "0.1.0",
+  "publisher": "lucene-lens",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onView:luceneLens.welcome",
+    "onCommand:luceneLens.open"
+  ],
+  "extensionKind": ["workspace"],
+  "main": "./dist/extension/extension.js",
+  "contributes": {
+    "commands": [
+      {"command": "luceneLens.open", "title": "Open Lucene Lens", "category": "Lucene Lens"},
+      {"command": "luceneLens.rescanWorkspace", "title": "Rescan Workspace Indexes", "category": "Lucene Lens"},
+      {"command": "luceneLens.export", "title": "Export Results", "category": "Lucene Lens"},
+      {"command": "luceneLens.showLogs", "title": "Show Lucene Lens Logs", "category": "Lucene Lens"}
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {"id": "luceneLens", "title": "Lucene Lens", "icon": "media/lucene-lens.svg"}
+      ]
+    },
+    "views": {
+      "luceneLens": [
+        {"id": "luceneLens.welcome", "name": "Indexes"}
+      ]
+    },
+    "configuration": {
+      "title": "Lucene Lens",
+      "properties": {
+        "luceneLens.java.home": {
+          "type": "string",
+          "default": "",
+          "description": "Java Home used to run the CLI. When empty, Lucene Lens uses java from PATH."
+        },
+        "luceneLens.cli.maxHeap": {
+          "type": "string",
+          "default": "512m",
+          "pattern": "^[1-9][0-9]*[mMgG]$",
+          "description": "Maximum heap for each one-shot Java CLI process."
+        },
+        "luceneLens.pageSize": {
+          "type": "number",
+          "enum": [25, 50, 100, 200],
+          "default": 50,
+          "description": "Default document page size."
+        },
+        "luceneLens.query.maxHits": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 10000,
+          "description": "Maximum query hit tracking threshold."
+        },
+        "luceneLens.query.analyzer": {
+          "type": "string",
+          "enum": ["standard", "keyword", "smartcn"],
+          "default": "standard",
+          "description": "Analyzer used by Lucene Query Parser."
+        },
+        "luceneLens.requestTimeout": {
+          "type": "number",
+          "minimum": 1000,
+          "default": 30000,
+          "description": "CLI request timeout in milliseconds."
+        },
+        "luceneLens.showSensitiveValuesInLogs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow field values in diagnostic logs."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "build:extension": "node esbuild.mjs --production",
+    "build:cli": "mvn -f cli/pom.xml clean package",
+    "copy:cli": "node scripts/copy-cli.mjs",
+    "compile": "npm run check-types && npm run build:extension",
+    "package": "npm run build:cli && npm run copy:cli && npm run compile",
+    "vsix": "npm run package && vsce package --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.2"
+  }
+}
