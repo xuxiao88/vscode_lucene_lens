@@ -1,5 +1,14 @@
-node_modules/
-dist/
-*.vsix
-cli/**/target/
+# npm dependencies
+/node_modules/
+
+# Generated extension and CLI bundles
+/dist/
+
+# Packaged VS Code extensions
+/*.vsix
+
+# Maven build outputs
+/cli/**/target/
+
+# macOS metadata
 .DS_Store
