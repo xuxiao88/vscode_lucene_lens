@@ -33,7 +33,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, tr:focus-visibl
 .query-settings-header { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
 .query-settings-header > div { display: grid; gap: 3px; }
 .query-settings-header strong, .analyzer-rules-heading strong { color: var(--vscode-foreground); }
-.rule-priority, .field-analyzer-source {
+.rule-priority {
   padding: 2px 7px;
   color: var(--vscode-textLink-foreground);
   background: var(--vscode-textBlockQuote-background);
@@ -89,35 +89,42 @@ button:focus-visible, input:focus-visible, select:focus-visible, tr:focus-visibl
 }
 .field-type-field-action { color: var(--vscode-descriptionForeground); }
 .field-type-field small { color: inherit; }
-.field-analyzers { display: grid; }
+.field-analyzers { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; padding: 8px 10px; }
 .field-analyzer {
-  display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(140px, .8fr) auto auto;
+  display: inline-flex;
   gap: 6px;
   align-items: center;
-  padding: 8px 10px;
+  width: max-content;
+  max-width: 100%;
+  padding: 4px 5px;
   color: var(--vscode-foreground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
 }
-.field-analyzer:last-child { border-bottom: 0; }
 .field-analyzer-field {
   display: grid;
   gap: 2px;
-  min-width: 0;
+  max-width: 180px;
+  padding: 0 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .field-analyzer-field strong { overflow: hidden; text-overflow: ellipsis; }
 .field-analyzer-field small { color: var(--vscode-descriptionForeground); }
+.field-analyzer select { width: 160px; max-width: 35vw; }
+.field-analyzer-editor select:first-child { width: 190px; }
 .field-analyzer-actions { display: flex; gap: 6px; }
 .field-analyzer-remove {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
   color: var(--vscode-textLink-foreground);
   background: transparent;
-  border-color: transparent;
 }
 button.secondary { color: var(--vscode-foreground); background: transparent; }
-.field-analyzers-empty { padding: 10px; }
+.field-analyzers-empty { width: 100%; padding: 2px 0; }
 .status { min-height: 28px; padding: 6px 10px; color: var(--vscode-descriptionForeground); }
 .status.error { color: var(--vscode-errorForeground); }
 .table-wrap { flex: 1; min-height: 0; overflow: auto; border-top: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); }
@@ -144,5 +151,8 @@ dialog pre { margin: 0; padding: 14px; overflow: auto; max-height: calc(80vh - 5
 
 @media (max-width: 520px) {
   .query-settings-header { flex-direction: column; }
-  .field-type-rule, .field-analyzer { grid-template-columns: 1fr; }
+  .field-type-rule { grid-template-columns: 1fr; }
+  .field-analyzer { width: 100%; }
+  .field-analyzer-field { flex: 1; min-width: 80px; }
+  .field-analyzer select { width: 140px; max-width: 45%; }
 }

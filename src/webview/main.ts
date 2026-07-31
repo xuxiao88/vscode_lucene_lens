@@ -208,17 +208,14 @@ function renderFieldAnalyzers(next: LensPageState): void {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "field-analyzer-remove";
-    remove.textContent = "Reset to type rule";
+    remove.textContent = "×";
     remove.title = `Reset ${field} to its inferred field type rule`;
     remove.setAttribute("aria-label", `Reset ${field} to its inferred field type rule`);
     remove.disabled = next.status === "scanning";
     remove.addEventListener("click", () =>
       vscode.postMessage({type: "removeFieldAnalyzer", field})
     );
-    const source = document.createElement("span");
-    source.className = "field-analyzer-source";
-    source.textContent = "Field rule";
-    row.append(name, select, source, remove);
+    row.append(name, select, remove);
     elements.fieldAnalyzers.append(row);
   }
   if (addingFieldAnalyzer && availableFields.length > 0) {
