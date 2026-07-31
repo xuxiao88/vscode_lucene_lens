@@ -70,7 +70,7 @@ vscode_lucene_lens/
 - 调用方向固定为 `command -> service -> spi <- plugin adapter -> util -> Lucene API`。
 - 插件 `adapter` 负责把 core SPI 适配到当前版本的 util；service 不通过版本判断或反射选择实现。
 - 每个 `cli-plugin-lucene-<major>` 只依赖一个 Lucene 主版本，并生成包含该版本 Lucene 运行依赖的插件 jar。
-- 首版 Lucene 9 插件包含 Query Parser、通用 Analyzer 和 Smart Chinese Analyzer 所需依赖。
+- 首版 Lucene 9 插件包含 Query Parser、通用 Analyzer、Smart Chinese Analyzer 和 `lucene-backward-codecs`；使用 Lucene 9.12.3 读取同一主版本的较早默认索引格式。
 - 插件构建时不能把 `cli-core` 类打进插件 jar；core SPI 由父 class loader 提供，插件 jar 只包含插件实现和 Lucene 依赖。
 - CLI core 每次运行只加载用户指定的一个插件 jar，不扫描或同时加载其他版本插件。
 - `dist/` 完全由构建流程生成，不手工维护，也不提交 Git。
@@ -200,6 +200,8 @@ stderr 仅记录诊断日志。若进程被强制终止、JVM 无法启动或 st
 - `JAVA_NOT_FOUND`
 - `JAVA_VERSION_UNSUPPORTED`
 - `INTERNAL_ERROR`
+
+索引引用了当前插件未注册的 codec 时返回 `INDEX_VERSION_UNSUPPORTED`，不得将 Lucene 的 `Could not load codec` 异常泛化为 `INTERNAL_ERROR`。
 
 #### 2.2.3 配置项
 

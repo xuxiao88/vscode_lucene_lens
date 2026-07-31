@@ -77,6 +77,8 @@ public final class Lucene9Util {
             return result;
         } catch (IOException exception) {
             throw mapIOException(exception);
+        } catch (RuntimeException exception) {
+            throw mapRuntimeException(exception);
         }
     }
 
@@ -585,6 +587,8 @@ public final class Lucene9Util {
             throw exception;
         } catch (IOException exception) {
             throw mapIOException(exception);
+        } catch (RuntimeException exception) {
+            throw mapRuntimeException(exception);
         }
     }
 
@@ -605,6 +609,24 @@ public final class Lucene9Util {
             return new PluginException("INDEX_VERSION_UNSUPPORTED", "The Lucene index version is unsupported.", exception);
         }
         return new PluginException("INTERNAL_ERROR", "Unable to read the Lucene index.", exception);
+    }
+
+    private RuntimeException mapRuntimeException(RuntimeException exception) {
+        if (exception instanceof PluginException) {
+            return exception;
+        }
+        Throwable cause = exception;
+        while (cause != null) {
+            String message = cause.getMessage();
+            if (message != null && message.contains("Could not load codec")) {
+                return new PluginException(
+                        "INDEX_VERSION_UNSUPPORTED",
+                        "The index uses a Lucene codec that is not available in this plugin.",
+                        exception);
+            }
+            cause = cause.getCause();
+        }
+        return exception;
     }
 
     private String lowerCamel(String value) {

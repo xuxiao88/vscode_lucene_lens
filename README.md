@@ -8,6 +8,8 @@ Lucene Lens 是一个用于桌面版 Visual Studio Code 的只读 Lucene 9 索�
 - Java 11 或更高版本
 - 由 Lucene 9 创建的本地索引
 
+插件基于 Lucene 9.12.3，并打包 backward codecs 以读取由较早 Lucene 9.x 默认 codec 创建的索引。
+
 Lucene Lens 优先使用 `luceneLens.java.home`。未配置时使用 `PATH` 中的 `java`。插件不打包 Java Runtime，也不会启动常驻 Java 进程。
 
 ## 使用方式

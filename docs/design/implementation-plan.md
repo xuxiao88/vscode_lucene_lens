@@ -2,7 +2,7 @@
 
 ## 1. 实施基线
 
-- 首版固定使用 Lucene 9.12.3 和 Java 11。
+- 首版固定使用 Lucene 9.12.3、`lucene-backward-codecs` 和 Java 11，可读取同一主版本的较早默认索引格式。
 - VS Code 扩展使用 TypeScript、npm、esbuild 和原生 Webview。
 - Java CLI 使用 Maven 多模块、Picocli、Jackson 和 Maven Shade Plugin。
 - `cli-core` 不依赖 Lucene；`cli-plugin-lucene-9` 通过 SPI 提供只读能力。
