@@ -88,12 +88,14 @@ vscode_lucene_lens/
 
 | 命令 ID | 标题 | 功能说明 |
 | --- | --- | --- |
-| `luceneLens.open` | Open Lucene Lens | 由侧边栏按钮调用，在编辑区打开或聚焦 Lucene Lens 页面 |
+| `luceneLens.open` | Open Lucene Lens | 在编辑区打开或聚焦 Lucene Lens 页面 |
+| `luceneLens.openIndex` | Open Lucene Index | 由侧边栏索引项调用，打开页面并选中指定索引；不显示在命令面板 |
+| `luceneLens.refreshIndexes` | Refresh Workspace Indexes | 刷新侧边栏中的工作区索引列表 |
 | `luceneLens.rescanWorkspace` | Rescan Workspace Indexes | 重新扫描当前工作区中的 Lucene 索引目录并更新页面下拉选项 |
 | `luceneLens.export` | Export Results | 将当前文档或查询结果导出为 CSV |
 | `luceneLens.showLogs` | Show Lucene Lens Logs | 查看命令耗时、结果数量、错误码和诊断日志 |
 
-索引选择、搜索、查看文档和分页属于页面内部交互，不单独注册 VS Code 命令。耗时操作通过 VS Code 进度通知取消；目录、权限、索引损坏、版本不兼容和查询语法错误直接显示在页面中。
+页面内的索引选择、搜索、查看文档和分页不单独注册 VS Code 命令；侧边栏索引项通过内部命令把索引 ID 传给单例页面。耗时操作通过 VS Code 进度通知取消；目录、权限、索引损坏、版本不兼容和查询语法错误直接显示在页面中。
 
 #### 2.2.2 CLI 命令协议
 
@@ -214,14 +216,16 @@ stderr 仅记录诊断日志。若进程被强制终止、JVM 无法启动或 st
 
 ### 2.3 交互设计
 
-#### 2.3.1 侧边栏入口
+#### 2.3.1 侧边栏索引导航
 
-Activity Bar 增加 `Lucene Lens` 图标。对应的侧边栏视图保持简单，只提供一个 `Open Lucene Lens` 按钮：
+Activity Bar 增加 `Lucene Lens` 图标，对应的 `Workspace Indexes` 视图直接承担索引发现和导航：
 
-1. 点击按钮执行 `luceneLens.open`。
-2. 如果页面尚未打开，在编辑区创建一个 Webview 页面。
-3. 如果页面已经打开，直接聚焦现有页面，不重复创建。
-4. 页面首次打开时立即扫描当前工作区。
+1. 视图首次展开时立即扫描当前工作区，并显示扫描中状态。
+2. 扫描成功后逐项展示索引名称、Lucene 版本和路径 tooltip；不再显示中转性质的打开按钮。
+3. 点击索引项执行内部命令 `luceneLens.openIndex`。如果页面尚未打开，在编辑区创建单例 Webview 页面并选中该索引；如果页面已经打开，则聚焦页面并切换索引。
+4. 视图标题栏提供刷新按钮，执行 `luceneLens.refreshIndexes`；页面内重新扫描得到的结果也同步到侧边栏。
+5. 未发现索引、工作区未受信任或扫描失败时，在列表中显示对应状态。
+6. 侧边栏和页面共享扩展进程缓存的扫描结果，点击索引时不重复执行 `probe`。
 
 #### 2.3.2 页面布局
 
@@ -533,7 +537,7 @@ Extension Host 必须先校验响应结构和 `protocolVersion`，再把 `result
 - `luceneVersionResolver`：发现已打包插件、执行 `probe`、识别数据版本并维护当前索引的插件选择。
 - `indexDirectoryService`：扫描和维护工作区索引目录、版本匹配及页面缓存，不持有 Java reader 或进程。
 - `protocol/validation`：校验来自 CLI 和 Webview 的所有消息。
-- `views`：注册侧边栏入口和打开页面按钮，不承载索引数据。
+- `views`：展示工作区索引扫描状态和索引导航项，通过索引 ID 驱动单例页面，不直接读取文件或启动进程。
 - `webview`：只负责展示与交互，数据统一通过扩展进程转发。
 
 版本选择流程：
@@ -619,12 +623,12 @@ CLI core 和 Lucene 插件 jar 均不包含平台原生依赖，使用同一套�
 
 #### 2.11.2 只读打开与概览
 
-- 侧边栏入口按钮和单例 Webview 页面
+- 可刷新、可点击的侧边栏索引导航和单例 Webview 页面
 - 工作区 `segments_*` 扫描、候选目录去重和 `probe`
 - 索引下拉、版本下拉、字段加载和第一页文档
 - 顶部搜索框、表格、页脚分页和页面状态
 
-验收：点击侧边栏按钮可打开页面，自动发现工作区索引，选择索引后展示第一页数据并可搜索和翻页。
+验收：侧边栏自动发现并列出工作区索引；点击索引可直接打开页面并展示该索引第一页数据，且可搜索和翻页。
 
 #### 2.11.3 字段能力
 

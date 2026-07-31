@@ -10,14 +10,21 @@
   },
   "categories": ["Other"],
   "activationEvents": [
-    "onView:luceneLens.welcome",
-    "onCommand:luceneLens.open"
+    "onView:luceneLens.indexes",
+    "onCommand:luceneLens.open",
+    "onCommand:luceneLens.openIndex"
   ],
   "extensionKind": ["workspace"],
   "main": "./dist/extension/extension.js",
   "contributes": {
     "commands": [
       {"command": "luceneLens.open", "title": "Open Lucene Lens", "category": "Lucene Lens"},
+      {
+        "command": "luceneLens.refreshIndexes",
+        "title": "Refresh Workspace Indexes",
+        "category": "Lucene Lens",
+        "icon": "$(refresh)"
+      },
       {"command": "luceneLens.rescanWorkspace", "title": "Rescan Workspace Indexes", "category": "Lucene Lens"},
       {"command": "luceneLens.export", "title": "Export Results", "category": "Lucene Lens"},
       {"command": "luceneLens.showLogs", "title": "Show Lucene Lens Logs", "category": "Lucene Lens"}
@@ -29,7 +36,16 @@
     },
     "views": {
       "luceneLens": [
-        {"id": "luceneLens.welcome", "name": "Indexes"}
+        {"id": "luceneLens.indexes", "name": "Workspace Indexes"}
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "luceneLens.refreshIndexes",
+          "when": "view == luceneLens.indexes",
+          "group": "navigation"
+        }
       ]
     },
     "configuration": {

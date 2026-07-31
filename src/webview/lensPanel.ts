@@ -51,6 +51,8 @@ export class LensPanel implements vscode.Disposable {
   private cancellation: vscode.CancellationTokenSource | undefined;
   private resolvedIndexes: ResolvedIndex[] = [];
   private cursors: Array<string | undefined> = [undefined];
+  private webviewReady = false;
+  private preferredIndexId: string | undefined;
   private state: LensPageState;
 
   private constructor(
@@ -91,7 +93,19 @@ export class LensPanel implements vscode.Disposable {
     LensPanel.current = undefined;
   }
 
-  async rescan(): Promise<void> {
+  async openIndex(indexId: string): Promise<void> {
+    this.preferredIndexId = indexId;
+    this.panel.reveal(vscode.ViewColumn.One);
+    if (!this.webviewReady) return;
+    const cached = this.indexService.getCached();
+    if (cached.some((index) => index.id === indexId)) {
+      await this.applyIndexes(cached, indexId);
+      return;
+    }
+    await this.rescan(indexId);
+  }
+
+  async rescan(preferredIndexId = this.preferredIndexId): Promise<void> {
     this.cancelCurrent();
     if (!vscode.workspace.isTrusted) {
       this.resolvedIndexes = [];
@@ -118,30 +132,8 @@ export class LensPanel implements vscode.Disposable {
       hasNext: false
     });
     try {
-      this.resolvedIndexes = await this.indexService.scan(token);
-      const options = this.resolvedIndexes.map(toIndexOption);
-      if (options.length === 0) {
-        this.update({
-          status: "empty",
-          indexes: [],
-          selectedIndexId: undefined,
-          selectedLuceneMajor: undefined,
-          rows: [],
-          total: "0",
-          hasPrevious: false,
-          hasNext: false
-        });
-        return;
-      }
-      this.cursors = [undefined];
-      this.update({
-        indexes: options,
-        selectedIndexId: options[0]?.id,
-        selectedLuceneMajor: 9,
-        query: "",
-        pageNumber: 1
-      });
-      await this.loadPage();
+      const indexes = await this.indexService.scan(token);
+      await this.applyIndexes(indexes, preferredIndexId);
     } catch (error) {
       this.handleError(error);
     } finally {
@@ -194,8 +186,15 @@ export class LensPanel implements vscode.Disposable {
     try {
       switch (message.type) {
         case "ready":
+          this.webviewReady = true;
+          if (this.indexService.getCached().length > 0) {
+            await this.applyIndexes(this.indexService.getCached(), this.preferredIndexId);
+          } else {
+            await this.rescan(this.preferredIndexId);
+          }
+          break;
         case "rescan":
-          await this.rescan();
+          await this.rescan(this.state.selectedIndexId);
           break;
         case "selectIndex":
           await this.selectIndex(message.indexId);
@@ -235,6 +234,7 @@ export class LensPanel implements vscode.Disposable {
   private async selectIndex(indexId: string): Promise<void> {
     if (!this.resolvedIndexes.some((item) => item.id === indexId)) return;
     this.cancelCurrent();
+    this.preferredIndexId = indexId;
     this.cursors = [undefined];
     this.update({
       selectedIndexId: indexId,
@@ -242,6 +242,47 @@ export class LensPanel implements vscode.Disposable {
       query: "",
       pageNumber: 1,
       rows: []
+    });
+    await this.loadPage();
+  }
+
+  private async applyIndexes(
+    indexes: ResolvedIndex[],
+    preferredIndexId?: string
+  ): Promise<void> {
+    this.cancelCurrent();
+    this.resolvedIndexes = indexes;
+    const options = indexes.map(toIndexOption);
+    if (options.length === 0) {
+      this.preferredIndexId = undefined;
+      this.cursors = [undefined];
+      this.update({
+        status: "empty",
+        indexes: [],
+        selectedIndexId: undefined,
+        selectedLuceneMajor: undefined,
+        rows: [],
+        total: "0",
+        hasPrevious: false,
+        hasNext: false
+      });
+      return;
+    }
+    const selectedIndexId = options.some((option) => option.id === preferredIndexId)
+      ? preferredIndexId
+      : options[0]?.id;
+    this.preferredIndexId = selectedIndexId;
+    this.cursors = [undefined];
+    this.update({
+      indexes: options,
+      selectedIndexId,
+      selectedLuceneMajor: 9,
+      query: "",
+      pageNumber: 1,
+      rows: [],
+      total: "0",
+      hasPrevious: false,
+      hasNext: false
     });
     await this.loadPage();
   }

@@ -7,11 +7,20 @@ import {parseProbeResult} from "../protocol/validation";
 
 const EXCLUDED_DIRECTORY = /(^|[\\/])(\.git|node_modules|dist|target|\.idea|\.vscode)([\\/]|$)/;
 
-export class IndexDirectoryService {
+export class IndexDirectoryService implements vscode.Disposable {
+  private readonly didScanEmitter = new vscode.EventEmitter<readonly ResolvedIndex[]>();
+  private resolvedIndexes: ResolvedIndex[] = [];
+
+  readonly onDidScan = this.didScanEmitter.event;
+
   constructor(
     private readonly runner: JavaCommandRunner,
     private readonly output: vscode.OutputChannel
   ) {}
+
+  getCached(): ResolvedIndex[] {
+    return [...this.resolvedIndexes];
+  }
 
   async scan(token?: vscode.CancellationToken): Promise<ResolvedIndex[]> {
     const segmentFiles = (await vscode.workspace.findFiles("**/segments_*"))
@@ -52,6 +61,14 @@ export class IndexDirectoryService {
         );
       }
     }
+    if (!token?.isCancellationRequested) {
+      this.resolvedIndexes = results;
+      this.didScanEmitter.fire(this.getCached());
+    }
     return results;
+  }
+
+  dispose(): void {
+    this.didScanEmitter.dispose();
   }
 }

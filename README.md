@@ -14,8 +14,10 @@ Lucene Lens 优先使用 `luceneLens.java.home`。未配置时使用 `PATH` 中�
 
 1. 打开包含 Lucene 索引目录的受信任工作区。
 2. 点击 Activity Bar 中的 Lucene Lens 图标。
-3. 点击 **Open Lucene Lens**。
-4. 选择索引后浏览文档、输入 Lucene Query Parser 表达式，或将当前结果导出为 CSV。
+3. 在 **Workspace Indexes** 中点击要查看的索引，直接打开对应页面。
+4. 浏览文档、输入 Lucene Query Parser 表达式，或将当前结果导出为 CSV。
+
+侧边栏标题栏的刷新按钮可重新扫描工作区索引；主页面重新扫描后，侧边栏列表也会同步更新。
 
 首版版本下拉只有 Lucene 9。索引始终以只读方式打开。
 
